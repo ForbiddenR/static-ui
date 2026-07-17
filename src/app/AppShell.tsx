@@ -5,11 +5,11 @@ import { usePlatform } from '../state/PlatformContext'
 
 const navItems: { to: string; label: string; icon: IconName }[] = [
   { to: '/overview', label: '运行总览', icon: 'grid' },
-  { to: '/tasks', label: '任务中心', icon: 'tasks' },
+  { to: '/workers', label: 'Worker 资源', icon: 'worker' },
   { to: '/bots', label: 'Bot 管理', icon: 'bot' },
+  { to: '/tasks', label: '任务中心', icon: 'tasks' },
   { to: '/schedules', label: '调度计划', icon: 'calendar' },
   { to: '/results', label: '结果与附件', icon: 'file' },
-  { to: '/workers', label: 'Worker 资源', icon: 'worker' },
 ]
 
 const moduleMeta = {
