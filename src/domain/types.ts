@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import type { JsonObject } from './json'
+import type { zhCN } from '../i18n/locales/zh-CN'
 
 export type BotStatus = 'enabled' | 'disabled'
 export type TaskStatus = 'pending' | 'dispatching' | 'running' | 'canceling' | 'success' | 'partial_success' | 'failed' | 'timeout' | 'canceled'
@@ -231,8 +232,15 @@ export interface PlatformSeedState {
   workers: Worker[]
 }
 
+export type ToastKey = keyof typeof zhCN.common.toast
+
+export interface ToastMessage {
+  key: ToastKey
+  values?: Record<string, string | number>
+}
+
 export interface PlatformState extends PlatformSeedState {
-  toast: string
+  toast: ToastMessage | null
 }
 
 export interface CreateTaskPayload {
@@ -268,7 +276,7 @@ export interface ScheduleFormPayload {
 
 export interface PlatformContextValue {
   state: PlatformState
-  showToast: (message: string) => void
+  showToast: (key: ToastKey, values?: ToastMessage['values']) => void
   createTask: (payload: CreateTaskPayload) => string | null
   cancelTask: (taskId: string) => void
   retryTask: (taskId: string, mode?: 'all' | 'failed_items') => string | null
@@ -288,7 +296,7 @@ export interface PlatformProviderProps {
 }
 
 export type PlatformAction =
-  | { type: 'SET_TOAST'; message: string }
+  | { type: 'SET_TOAST'; message: ToastMessage | null }
   | { type: 'ADD_TASK'; sequence: number; task: Task; items: TaskItem[]; logs: TaskLog[]; events: TaskEvent[] }
   | { type: 'CANCEL_TASK_REQUEST'; taskId: string; sequence: number; finishedAt: string | null; log: TaskLog; event: TaskEvent }
   | { type: 'CANCEL_TASK_COMPLETE'; taskId: string; finishedAt: string; event: TaskEvent }

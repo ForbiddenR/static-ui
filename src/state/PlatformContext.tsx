@@ -1,4 +1,5 @@
 import { createContext, useContext, useMemo, useReducer, useRef } from 'react'
+import { useTranslation } from 'react-i18next'
 import { initialPlatformState } from '../data/seedData'
 import type {
   AddBotVersionPayload,
@@ -22,6 +23,8 @@ import type {
   TaskLog,
   TaskStatistics,
   TaskStatus,
+  ToastKey,
+  ToastMessage,
 } from '../domain/types'
 
 const PlatformContext = createContext<PlatformContextValue | null>(null)
@@ -197,14 +200,15 @@ function reducer(state: PlatformState, action: PlatformAction): PlatformState {
 }
 
 export function PlatformProvider({ children }: PlatformProviderProps) {
-  const initialState: PlatformState = { ...initialPlatformState, toast: '' }
+  const { t } = useTranslation()
+  const initialState: PlatformState = { ...initialPlatformState, toast: null }
   const [state, dispatch] = useReducer(reducer, initialState)
   const toastTimer = useRef<ReturnType<typeof window.setTimeout> | null>(null)
 
-  const showToast = (message: string): void => {
+  const showToast = (key: ToastKey, values?: ToastMessage['values']): void => {
     if (toastTimer.current !== null) window.clearTimeout(toastTimer.current)
-    dispatch({ type: 'SET_TOAST', message })
-    toastTimer.current = window.setTimeout(() => dispatch({ type: 'SET_TOAST', message: '' }), 2800)
+    dispatch({ type: 'SET_TOAST', message: { key, values } })
+    toastTimer.current = window.setTimeout(() => dispatch({ type: 'SET_TOAST', message: null }), 2800)
   }
 
   const buildTask = ({ bot, botVersionId = null, name, owner = '平台运营组', runType = 'manual', sourceTaskId = null, scheduleId = null, scheduleRunId = null, inputSource = 'params', inputSummary = '使用默认运行参数', totalItems = 1 }: BuildTaskPayload): { sequence: number; task: Task } => {
@@ -231,7 +235,7 @@ export function PlatformProvider({ children }: PlatformProviderProps) {
   const createTask = (payload: CreateTaskPayload): string | null => {
     const bot = state.bots.find((item) => item.id === payload.botId)
     if (!bot || bot.status !== 'enabled') {
-      showToast('Bot 当前未启用，无法创建任务')
+      showToast('botDisabledCreate')
       return null
     }
     const built = buildTask({ bot, ...payload })
@@ -240,14 +244,14 @@ export function PlatformProvider({ children }: PlatformProviderProps) {
       logs: [{ id: `LOG-${built.sequence}-01`, task_id: built.task.id, task_item_id: null, level: 'info', source: 'master', seq: 1, message: '任务已创建，等待 Worker 分配', created_at: compactTime(built.sequence) }],
       events: [{ id: `EV-${built.sequence}-01`, task_id: built.task.id, type: 'created', label: '任务已创建', at: compactTime(built.sequence), actor: '当前用户' }],
     })
-    showToast('任务已创建，正在等待 Worker 分配')
+    showToast('taskCreated')
     return built.task.id
   }
 
   const cancelTask = (taskId: string): void => {
     const task = state.tasks.find((item) => item.id === taskId)
     if (!task || !cancelableTaskStatuses.has(task.status)) {
-      showToast('当前任务状态不支持取消')
+      showToast('taskCannotCancel')
       return
     }
     const sequence = state.sequence + 1
@@ -257,10 +261,10 @@ export function PlatformProvider({ children }: PlatformProviderProps) {
       event: { id: `EV-CANCEL-${sequence}`, task_id: taskId, type: 'canceling', label: task.status === 'pending' ? '任务已取消' : '正在取消任务', at: compactTime(sequence), actor: '当前用户' },
     })
     if (task.status === 'pending') {
-      showToast('任务已取消')
+      showToast('taskCanceled')
       return
     }
-    showToast('取消指令已发送')
+    showToast('cancelSent')
     window.setTimeout(() => dispatch({
       type: 'CANCEL_TASK_COMPLETE', taskId, finishedAt: demoStamp(sequence + 1),
       event: { id: `EV-CANCELED-${sequence}`, task_id: taskId, type: 'canceled', label: '任务已取消', at: compactTime(sequence + 1), actor: task.worker_id || 'Master' },
@@ -270,12 +274,12 @@ export function PlatformProvider({ children }: PlatformProviderProps) {
   const retryTask = (taskId: string, mode: 'all' | 'failed_items' = 'all'): string | null => {
     const source = state.tasks.find((item) => item.id === taskId)
     if (!source || !retryableTaskStatuses.has(source.status)) {
-      showToast('当前任务状态不支持重试')
+      showToast('taskCannotRetry')
       return null
     }
     const bot = state.bots.find((item) => item.id === source.bot_id)
     if (!bot || bot.status !== 'enabled') {
-      showToast('关联 Bot 未启用，无法重试')
+      showToast('retryBotDisabled')
       return null
     }
     const failedItems = state.taskItems.filter((item) => item.task_id === taskId && ['failed', 'timeout'].includes(item.status))
@@ -291,7 +295,7 @@ export function PlatformProvider({ children }: PlatformProviderProps) {
       logs: [{ id: `LOG-RETRY-${built.sequence}`, task_id: built.task.id, task_item_id: null, level: 'info', source: 'master', seq: 1, message: `由 ${source.id} 创建重试任务`, created_at: compactTime(built.sequence) }],
       events: [{ id: `EV-RETRY-${built.sequence}`, task_id: built.task.id, type: 'created', label: '重试任务已创建', at: compactTime(built.sequence), actor: '当前用户' }],
     })
-    showToast('重试任务已创建，原任务保持不变')
+    showToast('retryCreated')
     return built.task.id
   }
 
@@ -300,7 +304,7 @@ export function PlatformProvider({ children }: PlatformProviderProps) {
     if (!bot) return
     const status = bot.status === 'enabled' ? 'disabled' : 'enabled'
     dispatch({ type: 'TOGGLE_BOT', botId, status, updatedAt: demoStamp(state.sequence + 1) })
-    showToast(status === 'enabled' ? 'Bot 已启用' : 'Bot 已停用；已有任务不受影响')
+    showToast(status === 'enabled' ? 'botEnabled' : 'botDisabled')
   }
 
   const addBotVersion = (botId: string, form: AddBotVersionPayload): void => {
@@ -310,13 +314,13 @@ export function PlatformProvider({ children }: PlatformProviderProps) {
     const versionName = major ? `v${major[1]}.${Number(major[2]) + 1}.0` : 'v1.0.0'
     const version = { id: `bv-${sequence}`, bot_id: botId, version: versionName, source_file: form.fileName, entrypoint: form.entrypoint || 'main.py', change_note: form.changeNote, created_by: '当前用户', created_at: demoStamp(sequence) }
     dispatch({ type: 'ADD_BOT_VERSION', botId, version, sequence })
-    showToast('新版本已上传并设为当前版本')
+    showToast('versionUploaded')
   }
 
   const createSchedule = (form: ScheduleFormPayload): string | null => {
     const version = form.botVersionId ? state.botVersions.find((item) => item.id === form.botVersionId && item.bot_id === form.botId) : null
     if (form.botVersionId && !version) {
-      showToast('固定版本与目标 Bot 不匹配')
+      showToast('versionMismatch')
       return null
     }
     const sequence = state.sequence + 1
@@ -333,7 +337,7 @@ export function PlatformProvider({ children }: PlatformProviderProps) {
       created_by: '当前用户', updated_at: demoStamp(sequence),
     }
     dispatch({ type: 'ADD_SCHEDULE', schedule, sequence })
-    showToast('调度计划已创建')
+    showToast('scheduleCreated')
     return id
   }
 
@@ -342,7 +346,7 @@ export function PlatformProvider({ children }: PlatformProviderProps) {
     if (!current) return
     const version = form.botVersionId ? state.botVersions.find((item) => item.id === form.botVersionId && item.bot_id === form.botId) : null
     if (form.botVersionId && !version) {
-      showToast('固定版本与目标 Bot 不匹配')
+      showToast('versionMismatch')
       return
     }
     const status: Schedule['status'] = form.enabled ? 'enabled' : 'disabled'
@@ -362,7 +366,7 @@ export function PlatformProvider({ children }: PlatformProviderProps) {
       next_run_at: status === 'enabled' ? nextRunAt(jitterSeconds) : null,
     }
     dispatch({ type: 'UPDATE_SCHEDULE', schedule })
-    showToast('调度计划已更新，下一次运行时间已重算')
+    showToast('scheduleUpdated')
   }
 
   const toggleSchedule = (scheduleId: string): void => {
@@ -370,14 +374,14 @@ export function PlatformProvider({ children }: PlatformProviderProps) {
     if (!schedule) return
     const status = schedule.status === 'enabled' ? 'disabled' : 'enabled'
     dispatch({ type: 'TOGGLE_SCHEDULE', scheduleId, status, nextPlannedAt: status === 'enabled' ? '2026-07-15 17:00' : null, nextRunAt: status === 'enabled' ? nextRunAt(schedule.jitter_seconds) : null, updatedAt: demoStamp(state.sequence + 1) })
-    showToast(status === 'enabled' ? '调度计划已启用' : '调度计划已停用；已创建任务不受影响')
+    showToast(status === 'enabled' ? 'scheduleEnabled' : 'scheduleDisabled')
   }
 
   const triggerSchedule = (scheduleId: string): string | null => {
     const schedule = state.schedules.find((item) => item.id === scheduleId)
     if (!schedule) return null
     if (schedule.status !== 'enabled') {
-      showToast('请先启用调度计划')
+      showToast('scheduleEnableFirst')
       return null
     }
     const bot = state.bots.find((item) => item.id === schedule.bot_id)
@@ -402,7 +406,7 @@ export function PlatformProvider({ children }: PlatformProviderProps) {
       log: task ? { id: `LOG-SCH-${sequence}`, task_id: task.id, task_item_id: null, level: 'info', source: 'master', seq: 1, message: `由调度计划 ${schedule.name} 手动触发`, created_at: compactTime(sequence) } : null,
       event: task ? { id: `EV-SCH-${sequence}`, task_id: task.id, type: 'created', label: '调度任务已创建', at: compactTime(sequence), actor: 'Schedule' } : null,
     })
-    showToast(runStatus === 'task_created' ? '已创建任务，等待 Worker 分配' : reason === 'bot_disabled' ? '本轮已跳过：关联 Bot 未启用' : '本轮已跳过：上一轮任务仍在执行')
+    showToast(runStatus === 'task_created' ? 'scheduleTaskCreated' : reason === 'bot_disabled' ? 'scheduleSkippedBot' : 'scheduleSkippedRunning')
     return task?.id || null
   }
 
@@ -410,12 +414,12 @@ export function PlatformProvider({ children }: PlatformProviderProps) {
     const sequence = state.sequence + 1
     const content = format === 'json'
       ? JSON.stringify(results, null, 2)
-      : `﻿${[['结果编号', '任务编号', '类型', '业务键', '数据'], ...results.map((result) => [result.id, result.task_id, result.type, result.key, JSON.stringify(result.data)])].map((row) => row.map((cell) => `"${String(cell).replaceAll('"', '""')}"`).join(',')).join('\n')}`
+      : `﻿${[[t('csvHeaders.resultId'), t('csvHeaders.taskId'), t('csvHeaders.type'), t('csvHeaders.key'), t('csvHeaders.data')], ...results.map((result) => [result.id, result.task_id, result.type, result.key, JSON.stringify(result.data)])].map((row) => row.map((cell) => `"${String(cell).replaceAll('"', '""')}"`).join(',')).join('\n')}`
     const name = `results-export-${sequence}.${format}`
     const artifact: Artifact = { id: `ART-${sequence}`, task_id: results[0]?.task_id || null, task_item_id: null, bot_id: results[0]?.bot_id || null, name, type: 'export', content_type: format === 'json' ? 'application/json' : 'text/csv', size: new Blob([content]).size, checksum: `demo:${sequence}`, created_at: demoStamp(sequence), content }
     dispatch({ type: 'ADD_ARTIFACT', artifact, sequence })
     downloadArtifact(artifact)
-    showToast('结果已导出，并生成新的附件记录')
+    showToast('resultsExported')
   }
 
   const downloadArtifact = (artifact: Artifact): void => {
@@ -430,7 +434,7 @@ export function PlatformProvider({ children }: PlatformProviderProps) {
   const simulateWorkerOffline = (workerId: string): void => {
     const worker = state.workers.find((item) => item.id === workerId)
     if (!worker || worker.status === 'offline') {
-      showToast('Worker 当前已离线')
+      showToast('workerAlreadyOffline')
       return
     }
     const affected = state.tasks.filter((task) => task.worker_id === workerId && ['dispatching', 'running'].includes(task.status))
@@ -440,14 +444,14 @@ export function PlatformProvider({ children }: PlatformProviderProps) {
       logs: affected.map((task, index) => ({ id: `LOG-OFFLINE-${sequence}-${index}`, task_id: task.id, task_item_id: null, level: 'error', source: 'master', seq: 1000 + index, message: task.status === 'running' ? 'Worker 心跳超时，任务执行失败' : 'Worker 未确认任务，已退回等待队列', created_at: compactTime(sequence) })),
       events: affected.map((task, index) => ({ id: `EV-OFFLINE-${sequence}-${index}`, task_id: task.id, type: task.status === 'running' ? 'failed' : 'pending', label: task.status === 'running' ? 'Worker 离线，任务失败' : '任务退回等待队列', at: compactTime(sequence), actor: 'Master' })),
     })
-    showToast(`已模拟心跳超时，影响 ${affected.length} 个任务`)
+    showToast('workerOfflineAffected', { count: affected.length })
   }
 
   const value = useMemo(() => ({
     state, showToast, createTask, cancelTask, retryTask, toggleBot, addBotVersion,
     createSchedule, updateSchedule, toggleSchedule, triggerSchedule,
     exportResults, downloadArtifact, simulateWorkerOffline,
-  }), [state])
+  }), [state, t])
 
   return <PlatformContext.Provider value={value}>{children}</PlatformContext.Provider>
 }
