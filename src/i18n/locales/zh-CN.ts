@@ -74,6 +74,8 @@ export const zhCN = {
     csvHeaders: { resultId: '结果编号', taskId: '任务编号', type: '类型', key: '业务键', data: '数据' },
   },
   shell: {
+    brandName: '衡枢',
+    avatarInitial: '陈',
     skipToContent: '跳到主要内容',
     brandHome: '衡枢运行总览',
     primaryNavigation: '主导航',

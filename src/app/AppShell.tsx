@@ -75,7 +75,7 @@ export default function AppShell() {
     <a className="skip-link" href="#main-content">{t('shell:skipToContent')}</a>
     <aside id="primary-navigation" className={`sidebar ${mobileNavOpen ? 'sidebar-open' : ''}`}>
       <NavLink to="/overview" className="brand" aria-label={t('shell:brandHome')}>
-        <div className="brand-mark"><span/><span/><span/></div><div><strong>衡枢</strong><small>BOT OPERATIONS</small></div>
+        <div className="brand-mark"><span/><span/><span/></div><div><strong>{t('shell:brandName')}</strong><small>BOT OPERATIONS</small></div>
       </NavLink>
       <nav className="side-nav" aria-label={t('shell:primaryNavigation')}>
         <p className="nav-caption">{t('shell:workspace')}</p>
@@ -83,7 +83,7 @@ export default function AppShell() {
       </nav>
       <div className="sidebar-bottom">
         <div className="system-health"><div className="health-head"><span><i/>{t('shell:systemHealthy')}</span><b>99.96%</b></div><div className="health-track"><span style={{ width: `${state.workers.length ? (onlineWorkers / state.workers.length) * 100 : 0}%` }}/></div><p>{t('shell:workersOnline', { online: onlineWorkers, total: state.workers.length })}</p></div>
-        <button className="profile-button" onClick={() => showToast('account')}><span className="avatar">陈</span><span><strong>{t('shell:administratorName')}</strong><small>{t('shell:administratorRole')}</small></span><Icon name="more" size={18}/></button>
+        <button className="profile-button" onClick={() => showToast('account')}><span className="avatar">{t('shell:avatarInitial')}</span><span><strong>{t('shell:administratorName')}</strong><small>{t('shell:administratorRole')}</small></span><Icon name="more" size={18}/></button>
       </div>
     </aside>
     {mobileNavOpen && <button className="nav-backdrop" aria-label={t('shell:closeNavigation')} onClick={() => setMobileNavOpen(false)}/>}

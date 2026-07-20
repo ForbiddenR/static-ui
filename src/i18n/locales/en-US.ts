@@ -78,6 +78,8 @@ export const enUS = {
     csvHeaders: { resultId: 'Result ID', taskId: 'Task ID', type: 'Type', key: 'Business key', data: 'Data' },
   },
   shell: {
+    brandName: 'Hengshu',
+    avatarInitial: 'C',
     skipToContent: 'Skip to main content',
     brandHome: 'Hengshu operations overview',
     primaryNavigation: 'Primary navigation',
