@@ -757,6 +757,12 @@ table.data tbody tr.no-click { cursor: default; }
 .stat.link { cursor: pointer; text-decoration: none; display: block; transition: all 0.15s; }
 .stat.link:hover { border-color: var(--border-neon); box-shadow: var(--shadow-glow); transform: translateY(-2px); }
 
+.data-scroll {
+  width: 100%;
+  overflow-x: auto;
+}
+.worker-table { min-width: 940px; }
+
 .empty {
   border: 1px dashed var(--border);
   padding: 34px;

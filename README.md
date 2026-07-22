@@ -13,6 +13,8 @@ built from the specifications in `docs/`. All data is **mocked client-side**
   progress bars, cancel / retry / re-run, TaskItem detail and a live terminal log view.
 - **Schedule Control** (`/schedules`) — create schedules (cron, timezone, overlap / missed-run policies, jitter),
   enable/disable, manual trigger (honors `overlap_policy=skip`), ScheduleRun history.
+- **Worker Pool** (`/workers`) — online/offline and enabled state, capacity use, tags, runtime version,
+  session and heartbeat metadata, assigned-task drilldown, and capacity-aware mock dispatch.
 - **Mock execution engine** — a 1.5 s heartbeat advances active tasks through the real lifecycle,
   including terminal-state arbitration from TaskItem statistics per `docs/Task执行规范.md`.
 - **i18n** — English / 中文 toggle. **Theme** — dark / light cyberpunk palettes. Both persisted.

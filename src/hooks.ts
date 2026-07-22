@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react';
-import { db, subscribe } from './store/db';
+import { db, getRevision, subscribe } from './store/db';
 
 export function useDB() {
-  useSyncExternalStore(subscribe, () => db);
+  useSyncExternalStore(subscribe, getRevision, getRevision);
   return db;
 }

@@ -26,6 +26,9 @@ export function tickTask(taskId: string): void {
     const w = db.workers.find((x) => x.id === task.worker_id);
     emitHelpers.log(task.id, 'info', 'worker', `TaskAck accepted by ${w?.name ?? 'worker'}; script process started`);
   } else if (task.status === 'running') {
+    const assignedWorker = db.workers.find((worker) => worker.id === task.worker_id);
+    if (assignedWorker) assignedWorker.last_heartbeat_at = now();
+
     // advance pending/running items
     const active = task.items.filter((i) => i.status === 'pending' || i.status === 'running');
     if (active.length > 0) {

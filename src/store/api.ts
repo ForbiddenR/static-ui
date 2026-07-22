@@ -177,17 +177,14 @@ export function triggerSchedule(scheduleId: string): ScheduleRun | null {
 
 // ---------- Workers ----------
 export function toggleWorker(workerId: string): void {
-  const w = db.workers.find((x) => x.id === workerId);
-  if (!w) return;
-  w.enabled = !w.enabled;
-  if (!w.enabled) {
-    // disabled workers stop accepting dispatch; session drops
-    w.status = 'offline';
-    w.session_id = null;
-  } else {
-    w.status = 'online';
-    w.session_id = uid('sess');
-    w.last_heartbeat_at = now();
+  const worker = db.workers.find((item) => item.id === workerId);
+  if (!worker) return;
+
+  worker.enabled = !worker.enabled;
+  if (worker.enabled && worker.status === 'offline') {
+    worker.status = 'online';
+    worker.session_id = uid('sess');
+    worker.last_heartbeat_at = now();
   }
   emitHelpers.emit();
 }

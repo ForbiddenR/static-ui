@@ -214,12 +214,20 @@ function persist() {
 // ---- pub/sub ----
 type Listener = () => void;
 const listeners = new Set<Listener>();
+let revision = 0;
+
 export function subscribe(fn: Listener): () => void {
   listeners.add(fn);
   return () => listeners.delete(fn);
 }
+
+export function getRevision(): number {
+  return revision;
+}
+
 function emit() {
   persist();
+  revision += 1;
   listeners.forEach((fn) => fn());
 }
 

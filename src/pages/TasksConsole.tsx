@@ -65,7 +65,7 @@ function CreateTaskForm({ onDone, onCreated }: { onDone: () => void; onCreated: 
 
 function TaskDrawer({ task, onClose }: { task: Task; onClose: () => void }) {
   const { t } = useI18n();
-  useDB(); // re-render on ticks
+  const db = useDB();
   const navigate = useNavigate();
   const termRef = useRef<HTMLDivElement>(null);
   const logs = logsForTask(task.id);
@@ -96,6 +96,14 @@ function TaskDrawer({ task, onClose }: { task: Task; onClose: () => void }) {
 
         <dl className="kv">
           <dt>{t('dash.col.bot')}</dt><dd>{task.bot_name}</dd>
+          <dt>{t('tasks.detail.worker')}</dt>
+          <dd className="mono">
+            {task.worker_id ? (
+              <button className="btn ghost sm" onClick={() => navigate(`/workers/${task.worker_id}`)}>
+                {db.workers.find((worker) => worker.id === task.worker_id)?.name ?? task.worker_id}
+              </button>
+            ) : '—'}
+          </dd>
           <dt>{t('tasks.f.params')}</dt><dd className="mono">{JSON.stringify(task.input_params)}</dd>
           {task.source_task_id && (
             <>

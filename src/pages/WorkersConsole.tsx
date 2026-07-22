@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useI18n } from '../i18n';
 import { useDB } from '../hooks';
@@ -25,14 +26,22 @@ function WorkerDrawer({ worker, onClose }: { worker: Worker; onClose: () => void
   const { t } = useI18n();
   const db = useDB();
   const navigate = useNavigate();
-  const tasks = db.tasks.filter((x) => x.worker_id === worker.id);
+  const tasks = db.tasks.filter((task) => task.worker_id === worker.id);
+
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [onClose]);
 
   return (
     <>
       <div className="drawer-veil" onClick={onClose} />
-      <div className="drawer">
+      <div className="drawer" role="dialog" aria-modal="true" aria-labelledby="worker-drawer-title">
         <div className="drawer-head">
-          <div className="drawer-title">{worker.name}</div>
+          <div className="drawer-title" id="worker-drawer-title">{worker.name}</div>
           <button className="drawer-close" onClick={onClose}>✕</button>
         </div>
         <div style={{ margin: '8px 0 14px' }}>
@@ -97,38 +106,40 @@ export default function WorkersConsole() {
       {db.workers.length === 0 ? (
         <div className="empty">{t('wkp.empty')}</div>
       ) : (
-        <table className="data" style={{ marginTop: 18 }}>
-          <thead>
-            <tr>
-              <th>{t('wkp.col.name')}</th>
-              <th>{t('wkp.col.status')}</th>
-              <th>{t('wkp.col.capacity')}</th>
-              <th>{t('wkp.col.tags')}</th>
-              <th>{t('wkp.col.version')}</th>
-              <th>{t('wkp.col.heartbeat')}</th>
-              <th>{t('wkp.col.enabled')}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {db.workers.map((w) => (
-              <tr key={w.id} onClick={() => navigate(`/workers/${w.id}`)}>
-                <td className="mono strong">{w.name}</td>
-                <td>
-                  <span className={`st ${w.status === 'online' ? 'running' : 'canceled'}`}>
-                    {w.status === 'online' ? t('wkp.online') : t('wkp.offline')}
-                  </span>
-                </td>
-                <td><CapacityBar worker={w} /></td>
-                <td>{w.tags.map((tag) => <span key={tag} className="chip violet">{tag}</span>)}</td>
-                <td className="mono">{w.version}</td>
-                <td className="mono">{timeShort(w.last_heartbeat_at)}</td>
-                <td onClick={(e) => e.stopPropagation()}>
-                  <span className={`toggle${w.enabled ? ' on' : ''}`} onClick={() => toggleWorker(w.id)} />
-                </td>
+        <div className="data-scroll" style={{ marginTop: 18 }}>
+          <table className="data worker-table">
+            <thead>
+              <tr>
+                <th>{t('wkp.col.name')}</th>
+                <th>{t('wkp.col.status')}</th>
+                <th>{t('wkp.col.capacity')}</th>
+                <th>{t('wkp.col.tags')}</th>
+                <th>{t('wkp.col.version')}</th>
+                <th>{t('wkp.col.heartbeat')}</th>
+                <th>{t('wkp.col.enabled')}</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {db.workers.map((worker) => (
+                <tr key={worker.id} onClick={() => navigate(`/workers/${worker.id}`)}>
+                  <td className="mono strong">{worker.name}</td>
+                  <td>
+                    <span className={`st ${worker.status === 'online' ? 'running' : 'canceled'}`}>
+                      {worker.status === 'online' ? t('wkp.online') : t('wkp.offline')}
+                    </span>
+                  </td>
+                  <td><CapacityBar worker={worker} /></td>
+                  <td>{worker.tags.map((tag) => <span key={tag} className="chip violet">{tag}</span>)}</td>
+                  <td className="mono">{worker.version}</td>
+                  <td className="mono">{timeShort(worker.last_heartbeat_at)}</td>
+                  <td onClick={(event) => event.stopPropagation()}>
+                    <span className={`toggle${worker.enabled ? ' on' : ''}`} onClick={() => toggleWorker(worker.id)} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
 
       {selected && <WorkerDrawer worker={selected} onClose={() => navigate('/workers')} />}
