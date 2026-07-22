@@ -1,30 +1,111 @@
-import { useEffect, useRef, type CSSProperties, type ChangeEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react'
-import { useTranslation } from 'react-i18next'
-import { Link } from 'react-router-dom'
-import type { BotStatus, ScheduleRunStatus, ScheduleStatus, TaskItemStatus, TaskStatus, ToastMessage, WorkerStatus } from '../domain/types'
+import type { ReactNode } from 'react';
 
-export type IconName = 'grid' | 'tasks' | 'bot' | 'calendar' | 'file' | 'worker' | 'search' | 'bell' | 'plus' | 'chevron' | 'back' | 'arrowUp' | 'arrowDown' | 'activity' | 'check' | 'close' | 'play' | 'more' | 'filter' | 'clock' | 'download' | 'upload' | 'pulse' | 'edit' | 'refresh' | 'database' | 'code' | 'eye'
-type BadgeStatus = TaskStatus | TaskItemStatus | BotStatus | ScheduleStatus | ScheduleRunStatus | WorkerStatus | 'draft' | 'archived'
-type DefinitionItem = readonly [string, ReactNode]
-
-export const statusMeta: Record<BadgeStatus, string> = {
-  pending: 'status-pending', dispatching: 'status-running', running: 'status-running', canceling: 'status-warning', success: 'status-success', partial_success: 'status-warning', failed: 'status-failed', canceled: 'status-pending', timeout: 'status-failed', enabled: 'status-success', disabled: 'status-pending', draft: 'status-warning', archived: 'status-pending', online: 'status-success', offline: 'status-failed', task_created: 'status-success', skipped: 'status-warning',
+export function PageHeader({ tag, title, lede }: { tag: string; title: ReactNode; lede: string }) {
+  return (
+    <header>
+      <div className="page-tag">{tag}</div>
+      <h1 className="page-title">{title}</h1>
+      <p className="page-lede">{lede}</p>
+    </header>
+  );
 }
 
-export function Icon({ name, size = 20 }: { name: IconName; size?: number }) {
-  const paths: Record<IconName, ReactNode> = {
-    grid: <><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></>, tasks: <><path d="M9 6h11M9 12h11M9 18h11"/><path d="m3.5 6 1 1 2-2M3.5 12l1 1 2-2M3.5 18l1 1 2-2"/></>, bot: <><rect x="4" y="7" width="16" height="12" rx="3"/><path d="M12 3v4M8 12h.01M16 12h.01M8 16h8"/></>, calendar: <><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01"/></>, file: <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6M8 13h8M8 17h6"/></>, worker: <><rect x="3" y="4" width="18" height="6" rx="2"/><rect x="3" y="14" width="18" height="6" rx="2"/><path d="M7 7h.01M7 17h.01M16 7h2M16 17h2"/></>, search: <><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></>, bell: <><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></>, plus: <path d="M12 5v14M5 12h14"/>, chevron: <path d="m9 18 6-6-6-6"/>, back: <path d="m15 18-6-6 6-6"/>, arrowUp: <path d="m18 15-6-6-6 6"/>, arrowDown: <path d="m6 9 6 6 6-6"/>, activity: <path d="M3 12h4l2-6 4 12 2-6h6"/>, check: <path d="m5 12 4 4L19 6"/>, close: <><path d="m6 6 12 12M18 6 6 18"/></>, play: <path d="m8 5 11 7-11 7Z"/>, more: <><circle cx="5" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1" fill="currentColor" stroke="none"/></>, filter: <path d="M4 5h16M7 12h10M10 19h4"/>, clock: <><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></>, download: <><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></>, upload: <><path d="M12 21V9M7 14l5-5 5 5M5 3h14"/></>, pulse: <path d="M3 12h4l2-5 4 10 2-5h6"/>, edit: <><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></>, refresh: <><path d="M20 6v5h-5"/><path d="M4 18v-5h5"/><path d="M18.5 9A7 7 0 0 0 6 6.5L4 11M5.5 15A7 7 0 0 0 18 17.5l2-4.5"/></>, database: <><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></>, code: <><path d="m8 9-4 3 4 3M16 9l4 3-4 3M14 5l-4 14"/></>, eye: <><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"/><circle cx="12" cy="12" r="2.5"/></>,
-  }
-  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>
+export function Section({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section>
+      <h2 className="sec-title">{title}</h2>
+      {children}
+    </section>
+  );
 }
-export function StatusBadge({ status }: { status: BadgeStatus }) { const { t } = useTranslation(); return <span className={`status-badge ${statusMeta[status]}`}><span className="status-dot" />{t(`statuses.${status}`)}</span> }
-export function PageHeader({ eyebrow, title, description, actions, backTo }: { eyebrow: ReactNode; title: ReactNode; description?: ReactNode; actions?: ReactNode; backTo?: string }) { const { t } = useTranslation(); return <section className="workspace-heading"><div>{backTo && <Link className="back-link" to={backTo}><Icon name="back" size={15}/>{t('backToList')}</Link>}<p className="eyebrow">{eyebrow}</p><h1>{title}</h1>{description && <p>{description}</p>}</div>{actions && <div className="heading-actions">{actions}</div>}</section> }
-export function PanelHeader({ kicker, title, action }: { kicker: ReactNode; title: ReactNode; action?: ReactNode }) { return <div className="panel-head"><div><p className="panel-kicker">{kicker}</p><h2>{title}</h2></div>{action}</div> }
-export function ProgressBar({ value, status = 'running', label }: { value: number; status?: BadgeStatus; label?: string }) { const { t } = useTranslation(); const progressStatus = ({ dispatching: 'running', canceling: 'partial_success', canceled: 'pending', timeout: 'failed' } as Partial<Record<BadgeStatus, string>>)[status] || status; return <div className="progress-block" aria-label={label || t('progressLabel', { value })}><div><span className={`progress-${progressStatus}`} style={{ width: `${Math.min(value, 100)}%` }} /></div><strong>{value}%</strong></div> }
-export function TrendChart({ values }: { values: readonly number[] }) { const { t } = useTranslation(); const max = Math.max(...values, 0); const denominator = Math.max(values.length - 1, 1); const points = values.map((value, index) => ({ x: 8 + index * (284 / denominator), y: max > 0 ? 112 - (value / max) * 88 : 112, value })); const line = points.map((point) => `${point.x},${point.y}`).join(' '); return <div className="trend-chart" role="img" aria-label={t('trendChartLabel')}><svg viewBox="0 0 308 126" preserveAspectRatio="none">{[24, 56, 88, 120].map((y) => <line key={y} x1="8" y1={y} x2="300" y2={y} className="chart-grid"/>)}{points.length > 1 && <><polyline points={line} className="chart-line-shadow"/><polyline points={line} className="chart-line"/></>}{points.map((point, index) => { const time = `${index + 8}:00`; const pointLabel = t('trendPointLabel', { time, count: point.value }); return <g className="chart-point" key={`${point.x}-${point.value}`} tabIndex={0} aria-label={pointLabel}><circle cx={point.x} cy={point.y} r="7" className="chart-hit"/><circle cx={point.x} cy={point.y} r="3.5" className="chart-dot"/><title>{pointLabel}</title></g> })}</svg><div className="chart-axis"><span>08:00</span><span>12:00</span><span>16:00</span><span>20:00</span></div></div> }
-export function Modal({ open, onClose, title, kicker, children, width = '640px' }: { open: boolean; onClose: () => void; title: ReactNode; kicker: ReactNode; children: ReactNode; width?: string }) { const { t } = useTranslation(); const dialogRef = useRef<HTMLElement | null>(null); const previousFocus = useRef<HTMLElement | null>(null); const closeRef = useRef(onClose); useEffect(() => { closeRef.current = onClose }, [onClose]); useEffect(() => { if (!open) return; previousFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; const focusables = dialogRef.current?.querySelectorAll<HTMLElement>('button, input, select, textarea, [href], [tabindex]:not([tabindex="-1"])'); const handleKey = (event: globalThis.KeyboardEvent) => { if (event.key === 'Escape') closeRef.current(); if (event.key !== 'Tab' || !focusables?.length) return; const first = focusables[0]; const last = focusables[focusables.length - 1]; if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus() } if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() } }; focusables?.[0]?.focus(); document.addEventListener('keydown', handleKey); return () => { document.removeEventListener('keydown', handleKey); previousFocus.current?.focus() } }, [open]); if (!open) return null; const style: CSSProperties & { '--modal-width': string } = { '--modal-width': width }; return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section ref={dialogRef} className="run-modal" style={style} role="dialog" aria-modal="true" aria-labelledby="dialog-title" onMouseDown={(event: MouseEvent<HTMLElement>) => event.stopPropagation()}><div className="modal-head"><div><p className="panel-kicker">{kicker}</p><h2 id="dialog-title">{title}</h2></div><button className="icon-button" onClick={onClose} aria-label={t('close')}><Icon name="close" size={18}/></button></div>{children}</section></div> }
-export function FilePicker({ fileName, onFile, accept = '.zip,.py,.xlsx,.xls,.csv', hint }: { fileName: string; onFile: (file: File | null, error: 'fileTooLarge' | null) => void; accept?: string; hint?: string }) { const { t } = useTranslation(); const ref = useRef<HTMLInputElement | null>(null); const handleChange = (event: ChangeEvent<HTMLInputElement>) => { const file = event.target.files?.[0]; if (!file) return; if (file.size > 50 * 1024 * 1024) { event.target.value = ''; onFile(null, 'fileTooLarge'); return } onFile(file, null) }; return <div className="upload-box"><Icon name="upload" size={24}/><div><strong>{fileName || t('selectUploadFile')}</strong><span>{fileName ? t('fileReady') : hint || t('uploadHint')}</span></div><input ref={ref} type="file" accept={accept} hidden onChange={handleChange}/><button type="button" onClick={() => ref.current?.click()}>{fileName ? t('replaceFile') : t('chooseFile')}</button></div> }
-export function Pagination({ page, totalPages, onChange }: { page: number; totalPages: number; onChange: (page: number) => void }) { const { t } = useTranslation(); if (totalPages <= 1) return null; return <div className="pagination"><button disabled={page === 1} onClick={() => onChange(page - 1)}>{t('previousPage')}</button>{Array.from({ length: totalPages }, (_, index) => index + 1).map((number) => <button key={number} className={page === number ? 'active' : ''} onClick={() => onChange(number)}>{number}</button>)}<button disabled={page === totalPages} onClick={() => onChange(page + 1)}>{t('nextPage')}</button></div> }
-export function EmptyState({ icon = 'search', title, description }: { icon?: IconName; title: ReactNode; description: ReactNode }) { return <div className="empty-state"><span><Icon name={icon} size={25}/></span><strong>{title}</strong><p>{description}</p></div> }
-export function DefinitionGrid({ items }: { items: readonly DefinitionItem[] }) { const { t } = useTranslation(); return <dl className="definition-grid">{items.map(([term, value]) => <div key={term}><dt>{term}</dt><dd>{value ?? t('none')}</dd></div>)}</dl> }
-export function ToastRegion({ message }: { message: ToastMessage | null }) { const { t } = useTranslation(); return <div className="toast-region" aria-live="polite" aria-atomic="true">{message && <div className="toast"><span><Icon name="check" size={15}/></span>{message.values ? t(`toast.${message.key}`, { ...message.values, defaultValue: message.key }) : t(`toast.${message.key}`)}</div>}</div> }
+
+export function Panel({ title, glow, children }: { title?: string; glow?: boolean; children: ReactNode }) {
+  return (
+    <div className={`panel${glow ? ' glow' : ''}`}>
+      {title && <div className="panel-title">{title}</div>}
+      {children}
+    </div>
+  );
+}
+
+export function Code({ children }: { children: string }) {
+  return <pre className="codeblock">{children}</pre>;
+}
+
+export type Method = 'GET' | 'POST' | 'PATCH' | 'DELETE';
+
+const methodClass: Record<Method, string> = {
+  GET: 'ep-get',
+  POST: 'ep-post',
+  PATCH: 'ep-patch',
+  DELETE: 'ep-delete',
+};
+
+export function EndpointTable({
+  rows,
+  headers,
+}: {
+  rows: Array<[Method, string, string]>;
+  headers: [string, string, string];
+}) {
+  return (
+    <table className="spec">
+      <thead>
+        <tr>
+          <th>{headers[0]}</th>
+          <th>{headers[1]}</th>
+          <th>{headers[2]}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map(([m, path, desc]) => (
+          <tr key={`${m}-${path}`}>
+            <td>
+              <span className={`ep-method ${methodClass[m]}`}>{m}</span>
+            </td>
+            <td>{path}</td>
+            <td>{desc}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+export function StateMachine({
+  nodes,
+  terminal,
+}: {
+  nodes: string[];
+  terminal?: string[];
+}) {
+  const tset = new Set(terminal ?? []);
+  return (
+    <div className="sm-wrap">
+      {nodes.map((n, i) => (
+        <span key={n} style={{ display: 'contents' }}>
+          {i > 0 && <span className="sm-arrow">──▶</span>}
+          <span className={`sm-node${i === 0 ? ' start' : ''}${tset.has(n) ? ' terminal' : ''}`}>
+            {n}
+          </span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+export function StateChips({ states, variant }: { states: string[]; variant?: string }) {
+  return (
+    <div>
+      {states.map((s) => (
+        <span key={s} className={`chip ${variant ?? 'neon'}`}>
+          {s}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+export function Note({ children }: { children: ReactNode }) {
+  return <div className="note-bar">{children}</div>;
+}
