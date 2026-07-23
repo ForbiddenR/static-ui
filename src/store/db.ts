@@ -102,6 +102,24 @@ export interface Worker {
   created_at: string;
 }
 
+export interface WorkerMetricPoint {
+  ts: string;
+  cpu_pct: number;
+  mem_pct: number;
+  items_per_min: number;
+  rtt_ms: number;
+}
+
+export interface WorkerLogEntry {
+  id: string;
+  worker_id: string;
+  seq: number;
+  level: 'debug' | 'info' | 'warning' | 'error';
+  source: 'heartbeat' | 'dispatch' | 'runtime' | 'session' | 'master';
+  message: string;
+  created_at: string;
+}
+
 export interface DB {
   bots: Bot[];
   versions: BotVersion[];
@@ -110,6 +128,8 @@ export interface DB {
   runs: ScheduleRun[];
   logs: LogEntry[];
   workers: Worker[];
+  workerMetrics: Record<string, WorkerMetricPoint[]>;
+  workerLogs: WorkerLogEntry[];
 }
 
 const KEY = 'botops-db-v2';
@@ -205,7 +225,42 @@ function seed(): DB {
     { id: 'worker_edge_02', name: 'edge-02', status: 'online', enabled: true, capacity_max: 2, capacity_used: 0, tags: ['cn-beijing'], version: 'workerd/1.4.2', session_id: 'sess_b207', current_task_ids: [], last_heartbeat_at: ts, created_at: ts },
     { id: 'worker_batch_01', name: 'batch-01', status: 'offline', enabled: false, capacity_max: 8, capacity_used: 0, tags: ['batch', 'high-mem'], version: 'workerd/1.3.9', session_id: null, current_task_ids: [], last_heartbeat_at: ts, created_at: ts },
   ];
-  return { bots: [botA, botB], versions, tasks, schedules, runs, logs, workers };
+  // Backdated telemetry window so detail pages have history on first paint;
+  // the engine keeps appending live samples from here.
+  const seedTelemetry = (load: number): WorkerMetricPoint[] => {
+    const points: WorkerMetricPoint[] = [];
+    let cpu = 8 + load * 55;
+    let mem = 30 + load * 32;
+    let tput = load * 14;
+    for (let i = 23; i >= 0; i -= 1) {
+      cpu = Math.min(95, Math.max(3, cpu + (Math.random() - 0.5) * 9));
+      mem = Math.min(92, Math.max(14, mem + (Math.random() - 0.5) * 3));
+      tput = Math.max(0, tput + (Math.random() - 0.5) * 3);
+      points.push({
+        ts: new Date(Date.now() - i * 1500).toISOString(),
+        cpu_pct: Math.round(cpu * 10) / 10,
+        mem_pct: Math.round(mem * 10) / 10,
+        items_per_min: Math.round(tput * 10) / 10,
+        rtt_ms: Math.round(20 + Math.random() * 26),
+      });
+    }
+    return points;
+  };
+  const workerMetrics: Record<string, WorkerMetricPoint[]> = {
+    worker_edge_01: seedTelemetry(0.25),
+    worker_edge_02: seedTelemetry(0),
+  };
+  const workerLogs: WorkerLogEntry[] = [
+    { id: 'wlog_1', worker_id: 'worker_edge_01', seq: 1, level: 'info', source: 'session', message: 'session registered (sess_a91f); capacity advertised 4 slots', created_at: ts },
+    { id: 'wlog_2', worker_id: 'worker_edge_01', seq: 2, level: 'info', source: 'dispatch', message: 'assignment task_55e8aa accepted (bot=Price Crawler); slot 1/4', created_at: ts },
+    { id: 'wlog_3', worker_id: 'worker_edge_01', seq: 3, level: 'debug', source: 'runtime', message: 'runtime report batch flushed (12 items)', created_at: ts },
+    { id: 'wlog_4', worker_id: 'worker_edge_02', seq: 4, level: 'info', source: 'session', message: 'session registered (sess_b207); capacity advertised 2 slots', created_at: ts },
+    { id: 'wlog_5', worker_id: 'worker_edge_02', seq: 5, level: 'debug', source: 'heartbeat', message: 'heartbeat ok rtt=28ms cap=0/2', created_at: ts },
+    { id: 'wlog_6', worker_id: 'worker_batch_01', seq: 6, level: 'warning', source: 'heartbeat', message: 'heartbeat missed (3 consecutive); grace window entered', created_at: ts },
+    { id: 'wlog_7', worker_id: 'worker_batch_01', seq: 7, level: 'error', source: 'session', message: 'session expired; node marked offline', created_at: ts },
+    { id: 'wlog_8', worker_id: 'worker_batch_01', seq: 8, level: 'warning', source: 'master', message: 'admission disabled by operator', created_at: ts },
+  ];
+  return { bots: [botA, botB], versions, tasks, schedules, runs, logs, workers, workerMetrics, workerLogs };
 }
 
 // Clears timing on disabled schedules, canonicalizes timezones, and recomputes
@@ -271,6 +326,10 @@ function load(): DB {
     if (raw) {
       const parsed = JSON.parse(raw) as DB;
       if (Array.isArray(parsed.bots) && Array.isArray(parsed.tasks)) {
+        // Telemetry fields postdate some persisted states; default them in
+        // rather than discarding the user's existing mock data.
+        parsed.workerMetrics ??= {};
+        parsed.workerLogs ??= [];
         return parsed;
       }
     }
@@ -326,10 +385,13 @@ function emit() {
 }
 
 let logSeq = db.logs.reduce((m, l) => Math.max(m, l.seq), 0);
+let workerLogSeq = db.workerLogs.reduce((m, l) => Math.max(m, l.seq), 0);
 
 // Bound the log window so long simulation sessions don't inflate localStorage
 // and the serialization cost of every persisted write.
 const LOG_LIMIT = 1000;
+const WORKER_LOG_LIMIT = 400;
+const METRIC_WINDOW = 40;
 
 export const emitHelpers = {
   emit,
@@ -337,6 +399,16 @@ export const emitHelpers = {
     logSeq += 1;
     db.logs.push({ id: uid('log'), task_id: taskId, seq: logSeq, level, source, message, created_at: now() });
     if (db.logs.length > LOG_LIMIT) db.logs.splice(0, db.logs.length - LOG_LIMIT);
+  },
+  workerLog(workerId: string, level: WorkerLogEntry['level'], source: WorkerLogEntry['source'], message: string) {
+    workerLogSeq += 1;
+    db.workerLogs.push({ id: uid('wlog'), worker_id: workerId, seq: workerLogSeq, level, source, message, created_at: now() });
+    if (db.workerLogs.length > WORKER_LOG_LIMIT) db.workerLogs.splice(0, db.workerLogs.length - WORKER_LOG_LIMIT);
+  },
+  workerMetric(workerId: string, point: WorkerMetricPoint) {
+    const window = (db.workerMetrics[workerId] ??= []);
+    window.push(point);
+    if (window.length > METRIC_WINDOW) window.splice(0, window.length - METRIC_WINDOW);
   },
   reset() {
     const fresh = seed();
@@ -347,6 +419,8 @@ export const emitHelpers = {
     db.runs = fresh.runs;
     db.logs = fresh.logs;
     db.workers = fresh.workers;
+    db.workerMetrics = fresh.workerMetrics;
+    db.workerLogs = fresh.workerLogs;
     emit();
     void refreshScheduleTimes();
   },

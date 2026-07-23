@@ -79,14 +79,14 @@ export function DetailHero({ tag, title, sub, side }: {
 }
 
 export function ScheduleNextRun({ schedule }: { schedule: Schedule }) {
-  const { lang, t } = useI18n();
+  const { t } = useI18n();
 
   if (!schedule.enabled) {
     return <span className="chip amber">{t('sch.next.disabled')}</span>;
   }
 
   const formatted = schedule.next_run_at
-    ? formatScheduleNextRun(schedule.next_run_at, schedule.timezone, lang)
+    ? formatScheduleNextRun(schedule.next_run_at, schedule.timezone)
     : null;
 
   return formatted

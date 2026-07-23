@@ -14,7 +14,9 @@ built from the specifications in `docs/`. All data is **mocked client-side**
 - **Schedule Control** (`/schedules`) — create schedules (cron, timezone, overlap / missed-run policies, jitter),
   enable/disable, manual trigger (honors `overlap_policy=skip`), ScheduleRun history.
 - **Worker Pool** (`/workers`) — online/offline and enabled state, capacity use, tags, runtime version,
-  session and heartbeat metadata, assigned-task drilldown, and capacity-aware mock dispatch.
+  session and heartbeat metadata, assigned-task drilldown, capacity-aware mock dispatch, live per-node
+  telemetry sparklines (CPU / memory / throughput / heartbeat RTT with hover scrubbing), and a
+  streaming worker log (session, dispatch, heartbeat, and runtime events).
 - **Full-page detail views** — every entity (bot, task, schedule, worker) opens a dedicated route
   with a corner-bracketed HUD hero, terminal-style `cd ..` back link, live stat strip, and
   cross-linked related records.

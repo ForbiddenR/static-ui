@@ -1,18 +1,85 @@
+import { useEffect, useRef, useState, type PointerEvent } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useI18n } from '../i18n';
 import { useDB } from '../hooks';
 import { Panel } from '../components/ui';
 import { BackLink, CapacityBar, DetailHero, Progress, StatusBadge, timeShort } from '../components/console';
-import { toggleWorker } from '../store/api';
+import { logsForWorker, toggleWorker } from '../store/api';
 
 const TERMINAL = new Set(['success', 'partial_success', 'failed', 'canceled', 'timeout']);
+
+// Single-series sparkline tile. Identity comes from the label text (never from
+// hue alone) and the current value is direct-labeled; scrubbing swaps the
+// readout to the hovered sample.
+function MetricTile({ label, points, times, format }: {
+  label: string;
+  points: number[];
+  times: string[];
+  format: (v: number) => string;
+}) {
+  const [hover, setHover] = useState<number | null>(null);
+  const count = points.length;
+  const idx = hover !== null && hover < count ? hover : count - 1;
+  const min = count ? Math.min(...points) : 0;
+  const max = count ? Math.max(...points) : 0;
+  const span = max - min;
+
+  const coords = points.map((v, i) => {
+    const x = count > 1 ? (i / (count - 1)) * 100 : 50;
+    const y = span === 0 ? 15 : 28 - ((v - min) / span) * 26;
+    return `${x.toFixed(2)},${y.toFixed(2)}`;
+  });
+  const line = count > 1 ? `M${coords.join(' L')}` : '';
+
+  const scrub = (e: PointerEvent<HTMLDivElement>) => {
+    if (count < 2) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const frac = (e.clientX - rect.left) / rect.width;
+    setHover(Math.min(count - 1, Math.max(0, Math.round(frac * (count - 1)))));
+  };
+
+  return (
+    <div className="stat metric-tile">
+      <div className="metric-head">
+        <span className="stat-label">{label}</span>
+        <span className="metric-cur">{count ? format(points[idx]) : '—'}</span>
+      </div>
+      <div
+        className="metric-spark"
+        role="img"
+        aria-label={count ? `${label} ${format(points[count - 1])}` : label}
+        onPointerMove={scrub}
+        onPointerLeave={() => setHover(null)}
+      >
+        <svg viewBox="0 0 100 30" preserveAspectRatio="none" aria-hidden="true">
+          {line && <path className="spark-area" d={`${line} L100,30 L0,30 Z`} />}
+          {line && <path className="spark-line" d={line} />}
+        </svg>
+        {hover !== null && count > 1 && (
+          <div className="spark-hair" style={{ left: `${(idx / (count - 1)) * 100}%` }} />
+        )}
+      </div>
+      <div className="metric-sub mono">
+        {hover !== null && count ? timeShort(times[idx]) : count ? <>↓{format(min)} ↑{format(max)}</> : '—'}
+      </div>
+    </div>
+  );
+}
 
 export default function WorkerDetail() {
   const { t } = useI18n();
   const db = useDB();
   const { workerId } = useParams();
   const navigate = useNavigate();
+  const termRef = useRef<HTMLDivElement>(null);
+
   const worker = db.workers.find((item) => item.id === workerId);
+  const workerLogs = worker ? logsForWorker(worker.id) : [];
+
+  useEffect(() => {
+    const el = termRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [workerLogs.length]);
 
   if (!worker) {
     return (
@@ -34,6 +101,9 @@ export default function WorkerDetail() {
     ? 0
     : Math.round((worker.capacity_used / worker.capacity_max) * 100);
   const currentTaskIds = new Set(worker.current_task_ids);
+
+  const metrics = db.workerMetrics[worker.id] ?? [];
+  const metricTimes = metrics.map((m) => m.ts);
 
   return (
     <>
@@ -103,6 +173,38 @@ export default function WorkerDetail() {
           <div className="stat-label">{t('wkp.detail.assignedNow')}</div>
         </div>
       </div>
+
+      <h2 className="sec-title worker-section-title">{t('wkp.detail.telemetry')}</h2>
+      {worker.status !== 'online' ? (
+        <div className="empty">{t('wkp.metric.offline')}</div>
+      ) : (
+        <div className="stat-grid metric-grid">
+          <MetricTile
+            label={t('wkp.metric.cpu')}
+            points={metrics.map((m) => m.cpu_pct)}
+            times={metricTimes}
+            format={(v) => `${Math.round(v)}%`}
+          />
+          <MetricTile
+            label={t('wkp.metric.mem')}
+            points={metrics.map((m) => m.mem_pct)}
+            times={metricTimes}
+            format={(v) => `${Math.round(v)}%`}
+          />
+          <MetricTile
+            label={t('wkp.metric.tput')}
+            points={metrics.map((m) => m.items_per_min)}
+            times={metricTimes}
+            format={(v) => `${v.toFixed(1)}/min`}
+          />
+          <MetricTile
+            label={t('wkp.metric.rtt')}
+            points={metrics.map((m) => m.rtt_ms)}
+            times={metricTimes}
+            format={(v) => `${Math.round(v)}ms`}
+          />
+        </div>
+      )}
 
       <h2 className="sec-title worker-section-title">{t('wkp.detail.record')}</h2>
       <div className="two-col detail-grid">
@@ -175,6 +277,28 @@ export default function WorkerDetail() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      <h2 className="sec-title worker-section-title">{t('wkp.detail.logs')}</h2>
+      {workerLogs.length === 0 ? (
+        <div className="empty">{t('wkp.detail.nologs')}</div>
+      ) : (
+        <div className="terminal" ref={termRef}>
+          {workerLogs.map((l) => (
+            <div className="tline" key={l.id}>
+              <span className="tseq">{String(l.seq).padStart(3, '0')}</span>
+              <span className={`lv ${l.level}`}>{l.level}</span>
+              <span className="src">[{l.source}]</span>
+              <span className="msg">{l.message}</span>
+            </div>
+          ))}
+          {worker.status === 'online' && (
+            <div className="tline">
+              <span className="tseq">···</span>
+              <span className="msg" style={{ color: 'var(--neon)' }}>▌</span>
+            </div>
+          )}
         </div>
       )}
     </>

@@ -2,10 +2,10 @@
 // All data is mocked and held client-side only (see db.ts).
 
 import { db, emitHelpers, now, uid, refreshScheduleTimes, type Bot, type BotVersion, type Schedule, type ScheduleRun, type Task, type TaskItemStatus } from './db';
-import { tickTask, releaseWorker } from './engine';
+import { tickTask, tickWorkers, releaseWorker } from './engine';
 import { calculateNextScheduleTimes, validateCron, validateTimezone } from './scheduleTime';
 
-export { tickTask };
+export { tickTask, tickWorkers };
 
 // ---------- Bots ----------
 export function createBot(input: { code: string; name: string; description: string }): Bot {
@@ -104,6 +104,9 @@ export function cancelTask(taskId: string): void {
   task.finished_at = now();
   releaseWorker(task);
   emitHelpers.log(task.id, 'warning', 'master', 'cancel requested by user; terminal state = canceled');
+  if (task.worker_id) {
+    emitHelpers.workerLog(task.worker_id, 'warning', 'master', `${task.id} canceled by user; slot released`);
+  }
   emitHelpers.emit();
 }
 
@@ -209,13 +212,24 @@ export function toggleWorker(workerId: string): void {
     worker.status = 'online';
     worker.session_id = uid('sess');
     worker.last_heartbeat_at = now();
+    emitHelpers.workerLog(worker.id, 'info', 'session', `session registered (${worker.session_id}); capacity advertised ${worker.capacity_max} slots`);
   }
+  emitHelpers.workerLog(
+    worker.id,
+    worker.enabled ? 'info' : 'warning',
+    'master',
+    `admission ${worker.enabled ? 'enabled' : 'disabled'} by operator`,
+  );
   emitHelpers.emit();
 }
 
 // ---------- Logs ----------
 export function logsForTask(taskId: string) {
   return db.logs.filter((l) => l.task_id === taskId).sort((a, b) => a.seq - b.seq);
+}
+
+export function logsForWorker(workerId: string) {
+  return db.workerLogs.filter((l) => l.worker_id === workerId).sort((a, b) => a.seq - b.seq);
 }
 
 // ---------- Reset ----------

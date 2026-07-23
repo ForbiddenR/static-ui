@@ -177,7 +177,7 @@ export default function SchedulesConsole() {
                   <td>{s.bot_name}</td>
                   <td className="mono">{s.cron}</td>
                   <td className="mono">{s.timezone}</td>
-                  <td className="schedule-next-col"><ScheduleNextRun schedule={s} /></td>
+                  <td className="mono schedule-next-col"><ScheduleNextRun schedule={s} /></td>
                   <td className="schedule-enabled-col" onClick={(e) => e.stopPropagation()}>
                     <span className={`toggle${s.enabled ? ' on' : ''}`} onClick={() => toggleSchedule(s.id)} />
                   </td>

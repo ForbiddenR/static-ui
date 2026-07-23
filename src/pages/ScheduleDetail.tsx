@@ -163,7 +163,7 @@ export default function ScheduleDetail() {
                   className={r.task_id ? '' : 'no-click'}
                   onClick={() => r.task_id && navigate(`/tasks/${r.task_id}`)}
                 >
-                  <td className="mono">{timeShort(r.created_at)}</td>
+                  <td className="mono strong">{timeShort(r.created_at)}</td>
                   <td><span className="chip violet">{r.trigger_reason}</span></td>
                   <td className="mono">{r.jitter_applied_seconds}s</td>
                   <td className="mono">{r.task_id ?? t('sch.skipped')}</td>

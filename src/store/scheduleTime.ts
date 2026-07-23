@@ -1,5 +1,3 @@
-import type { Lang } from '../i18n';
-
 export interface ScheduleTimes {
   next_planned_at: string;
   next_run_at: string;
@@ -76,12 +74,15 @@ export async function calculateNextScheduleTimes(input: {
   }
 }
 
-export function formatScheduleNextRun(iso: string, timezone: string, lang: Lang): string | null {
+// Assembled from parts so the output is always `YYYY-MM-DD HH:mm:ss` — the
+// same machine-timestamp shape timeShort() gives every other route — while
+// still being computed in the schedule's own timezone.
+export function formatScheduleNextRun(iso: string, timezone: string): string | null {
   const canonicalTimezone = validateTimezone(timezone);
   const date = new Date(iso);
   if (!canonicalTimezone || Number.isNaN(date.getTime())) return null;
 
-  const formatted = new Intl.DateTimeFormat(lang === 'zh' ? 'zh-CN' : 'en-US', {
+  const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: canonicalTimezone,
     year: 'numeric',
     month: '2-digit',
@@ -90,7 +91,9 @@ export function formatScheduleNextRun(iso: string, timezone: string, lang: Lang)
     minute: '2-digit',
     second: '2-digit',
     hourCycle: 'h23',
-  }).format(date);
+  }).formatToParts(date);
+  const get = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((p) => p.type === type)?.value ?? '';
 
-  return formatted;
+  return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}:${get('second')}`;
 }

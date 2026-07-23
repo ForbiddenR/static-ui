@@ -225,7 +225,7 @@ html, body {
 /* ---- Typography ---- */
 h1.page-title {
   font-family: var(--font-mono);
-  font-size: 34px;
+  font-size: clamp(26px, 4.2vw, 34px);
   font-weight: 700;
   letter-spacing: 1px;
   margin: 0 0 6px;
@@ -754,7 +754,9 @@ table.data tbody tr.no-click { cursor: default; }
 .dh-tag::before { content: '// '; color: var(--text-faint); }
 .dh-title {
   font-family: var(--font-mono);
-  font-size: clamp(20px, 3.2vw, 30px);
+  /* Same scale as h1.page-title so the record title doesn't shrink when
+     navigating from a console list to its detail route. */
+  font-size: clamp(26px, 4.2vw, 34px);
   font-weight: 700;
   letter-spacing: 1px;
   margin: 0;
@@ -837,9 +839,68 @@ table.data tbody tr.no-click { cursor: default; }
   box-shadow: var(--shadow-glow);
 }
 
+/* Worker telemetry tiles: single-series sparklines, one accent hue; identity
+   lives in the tile label and the direct-labeled value, never in color alone. */
+.metric-grid { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+.metric-tile { display: flex; flex-direction: column; }
+.metric-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+}
+.metric-cur {
+  font-family: var(--font-mono);
+  font-size: 19px;
+  font-weight: 700;
+  color: var(--text);
+  white-space: nowrap;
+}
+.metric-spark {
+  position: relative;
+  height: 46px;
+  margin-top: 10px;
+  cursor: crosshair;
+}
+.metric-spark svg { display: block; width: 100%; height: 100%; }
+.metric-spark::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  border-bottom: 1px solid var(--border);
+  pointer-events: none;
+}
+.spark-line {
+  fill: none;
+  stroke: var(--neon);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+  stroke-linejoin: round;
+}
+.spark-area { fill: var(--neon); opacity: 0.13; }
+.spark-hair {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--neon);
+  box-shadow: 0 0 6px var(--neon-glow);
+  pointer-events: none;
+}
+.metric-sub {
+  font-size: 10.5px;
+  color: var(--text-faint);
+  letter-spacing: 0.5px;
+  margin-top: 6px;
+  min-height: 15px;
+}
+
 @media (max-width: 900px) {
   .detail-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .stat.stat-wide { grid-column: 1 / -1; }
+  .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 600px) {
   .detail-stats { grid-template-columns: 1fr; }
@@ -847,6 +908,7 @@ table.data tbody tr.no-click { cursor: default; }
   .admission-ctl { width: 100%; justify-content: space-between; }
   .detail-kv { grid-template-columns: 1fr; gap: 2px; }
   .detail-kv dt { margin-top: 8px; }
+  .metric-grid { grid-template-columns: 1fr; }
 }
 
 .kv { display: grid; grid-template-columns: 150px 1fr; gap: 4px 14px; font-size: 13px; margin: 14px 0; }
@@ -907,14 +969,15 @@ table.data tbody tr.no-click { cursor: default; }
 }
 .worker-table { min-width: 940px; }
 .schedule-table {
-  min-width: 1080px;
+  min-width: 1000px;
   table-layout: fixed;
 }
-.schedule-table th:nth-child(1) { width: 190px; }
-.schedule-table th:nth-child(2) { width: 180px; }
+/* Machine-value columns hug their content; the unspecified name/bot columns
+   absorb the leftover width so slack never opens up between NEXT RUN and the
+   enabled toggle. */
 .schedule-table th:nth-child(3) { width: 125px; }
 .schedule-table th:nth-child(4) { width: 130px; }
-.schedule-table th:nth-child(5) { width: 240px; }
+.schedule-table th:nth-child(5) { width: 175px; }
 .schedule-next-col { white-space: nowrap; }
 table.data th.schedule-enabled-col,
 table.data td.schedule-enabled-col {

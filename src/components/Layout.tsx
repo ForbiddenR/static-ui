@@ -3,7 +3,7 @@ import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useI18n, type Lang } from '../i18n';
 import { useTheme } from '../theme';
 import { useDB } from '../hooks';
-import { tickTask, resetMockData } from '../store/api';
+import { tickTask, tickWorkers, resetMockData } from '../store/api';
 
 interface NavItem {
   to: string;
@@ -26,12 +26,13 @@ export default function Layout() {
   const location = useLocation();
   const db = useDB();
 
-  // Mock execution engine: advance active tasks on a heartbeat.
+  // Mock execution engine: advance active tasks and worker telemetry on a heartbeat.
   useEffect(() => {
     const timer = window.setInterval(() => {
       db.tasks
         .filter((x) => x.status === 'pending' || x.status === 'dispatching' || x.status === 'running')
         .forEach((x) => tickTask(x.id));
+      tickWorkers();
     }, 1500);
     return () => window.clearInterval(timer);
   }, [db]);

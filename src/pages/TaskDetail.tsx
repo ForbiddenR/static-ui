@@ -156,7 +156,7 @@ export default function TaskDetail() {
               <tbody>
                 {task.items.map((it) => (
                   <tr key={it.id} className="no-click">
-                    <td className="mono">{it.key}</td>
+                    <td className="mono strong">{it.key}</td>
                     <td><StatusBadge status={it.status} /></td>
                   </tr>
                 ))}

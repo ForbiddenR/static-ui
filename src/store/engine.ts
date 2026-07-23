@@ -21,6 +21,7 @@ export function tickTask(taskId: string): void {
     candidate.current_task_ids.push(task.id);
     candidate.last_heartbeat_at = now();
     emitHelpers.log(task.id, 'info', 'master', `capacity reserved on ${candidate.name}; AssignTask sent (session=${candidate.session_id})`);
+    emitHelpers.workerLog(candidate.id, 'info', 'dispatch', `assignment ${task.id} accepted (bot=${task.bot_name}); slot ${candidate.capacity_used}/${candidate.capacity_max}`);
   } else if (task.status === 'dispatching') {
     task.status = 'running';
     const w = db.workers.find((x) => x.id === task.worker_id);
@@ -63,6 +64,15 @@ export function tickTask(taskId: string): void {
       task.finished_at = now();
       releaseWorker(task);
       emitHelpers.log(task.id, 'info', 'master', `TaskFinished exit_code=0; terminal state arbitrated: ${task.status}`);
+      if (task.worker_id) {
+        const done = failed + success + skipped;
+        emitHelpers.workerLog(
+          task.worker_id,
+          task.status === 'success' ? 'info' : 'warning',
+          'runtime',
+          `${task.id} finished ${task.status} (${done}/${task.statistics.total} items); slot released`,
+        );
+      }
     }
   }
   emitHelpers.emit();
@@ -74,4 +84,62 @@ export function releaseWorker(task: { id: string; worker_id: string | null }): v
   w.capacity_used = Math.max(0, w.capacity_used - 1);
   w.current_task_ids = w.current_task_ids.filter((id) => id !== task.id);
   w.last_heartbeat_at = now();
+}
+
+// ---- worker telemetry ----
+// Random-walk samples pulled toward a load-derived target, so charts track
+// real slot usage while still looking like live machine noise.
+
+function drift(prev: number, target: number, pull: number, noise: number, lo: number, hi: number): number {
+  const next = prev + (target - prev) * pull + (Math.random() - 0.5) * noise;
+  return Math.round(Math.min(hi, Math.max(lo, next)) * 10) / 10;
+}
+
+let telemetryPhase = 0;
+
+export function tickWorkers(): void {
+  telemetryPhase += 1;
+  let sampled = false;
+
+  db.workers.forEach((worker, index) => {
+    if (worker.status !== 'online') return;
+    sampled = true;
+    worker.last_heartbeat_at = now();
+
+    const history = db.workerMetrics[worker.id];
+    const prev = history?.[history.length - 1];
+    const load = worker.capacity_max > 0 ? worker.capacity_used / worker.capacity_max : 0;
+
+    const cpuTarget = 8 + load * 58;
+    const memTarget = 30 + load * 34;
+    const tputTarget = load > 0 ? 4 + load * 16 : 0;
+
+    const cpu = drift(prev?.cpu_pct ?? cpuTarget, cpuTarget, 0.3, 9, 2, 97);
+    const mem = drift(prev?.mem_pct ?? memTarget, memTarget, 0.08, 3, 12, 93);
+    const tput = drift(prev?.items_per_min ?? tputTarget, tputTarget, 0.35, 3, 0, 60);
+    const spike = Math.random() < 0.03 ? 90 + Math.random() * 80 : 0;
+    const rtt = Math.round(Math.min(280, Math.max(12, 18 + Math.random() * 26 + spike)));
+
+    emitHelpers.workerMetric(worker.id, {
+      ts: now(),
+      cpu_pct: cpu,
+      mem_pct: mem,
+      items_per_min: tput,
+      rtt_ms: rtt,
+    });
+
+    // Staggered periodic heartbeat lines keep the log alive without spamming
+    // one entry per worker per tick.
+    if ((telemetryPhase + index * 3) % 8 === 0) {
+      emitHelpers.workerLog(worker.id, 'debug', 'heartbeat', `heartbeat ok rtt=${rtt}ms cap=${worker.capacity_used}/${worker.capacity_max}`);
+    }
+    if (rtt > 150) {
+      emitHelpers.workerLog(worker.id, 'warning', 'heartbeat', `heartbeat degraded rtt=${rtt}ms; link jitter suspected`);
+    }
+    if (cpu >= 88 && (prev?.cpu_pct ?? 0) < 88) {
+      emitHelpers.workerLog(worker.id, 'warning', 'runtime', `cpu pressure ${cpu}%; throttling script concurrency`);
+    }
+  });
+
+  if (sampled) emitHelpers.emit();
 }
