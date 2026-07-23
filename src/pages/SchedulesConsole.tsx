@@ -1,11 +1,12 @@
-import { useState, type FormEvent } from 'react';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useEffect, useState, type FormEvent } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useI18n } from '../i18n';
 import { useDB } from '../hooks';
 import { PageHeader, Panel } from '../components/ui';
-import { timeShort } from '../components/console';
-import { createSchedule, toggleSchedule, triggerSchedule } from '../store/api';
+import { ScheduleNextRun } from '../components/console';
+import { createSchedule, refreshScheduleNextRuns, toggleSchedule, triggerSchedule } from '../store/api';
 import type { Schedule } from '../store/db';
+import { validateCron, validateTimezone } from '../store/scheduleTime';
 
 function CreateScheduleForm({ onDone }: { onDone: () => void }) {
   const { t } = useI18n();
@@ -18,23 +19,46 @@ function CreateScheduleForm({ onDone }: { onDone: () => void }) {
   const [missed, setMissed] = useState<Schedule['missed_run_policy']>('skip');
   const [jitter, setJitter] = useState('300');
   const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
 
-  const submit = (e: FormEvent) => {
+  const submit = async (e: FormEvent) => {
     e.preventDefault();
+    if (busy) return;
     if (!name.trim() || !botId || !cron.trim()) {
       setErr(t('sch.err.required'));
       return;
     }
-    createSchedule({
-      bot_id: botId,
-      name: name.trim(),
-      cron: cron.trim(),
-      timezone: tz.trim() || 'UTC',
-      overlap_policy: overlap,
-      missed_run_policy: missed,
-      jitter_seconds: Math.max(0, parseInt(jitter, 10) || 0),
-    });
-    onDone();
+
+    const timezone = validateTimezone(tz);
+    if (!timezone) {
+      setErr(t('sch.err.timezone'));
+      return;
+    }
+
+    setBusy(true);
+    try {
+      if (!(await validateCron(cron, timezone))) {
+        setErr(t('sch.err.cron'));
+        return;
+      }
+
+      const schedule = await createSchedule({
+        bot_id: botId,
+        name: name.trim(),
+        cron: cron.trim(),
+        timezone,
+        overlap_policy: overlap,
+        missed_run_policy: missed,
+        jitter_seconds: Math.max(0, parseInt(jitter, 10) || 0),
+      });
+      if (!schedule) {
+        setErr(t('sch.err.cron'));
+        return;
+      }
+      onDone();
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -85,7 +109,7 @@ function CreateScheduleForm({ onDone }: { onDone: () => void }) {
         </div>
         {err && <div className="form-error">{err}</div>}
         <div className="form-actions">
-          <button className="btn" type="submit">{t('sch.f.submit')}</button>
+          <button className="btn" type="submit" disabled={busy}>{t('sch.f.submit')}</button>
           <button className="btn ghost" type="button" onClick={onDone}>{t('bots.f.cancel')}</button>
         </div>
       </form>
@@ -93,75 +117,19 @@ function CreateScheduleForm({ onDone }: { onDone: () => void }) {
   );
 }
 
-function ScheduleDrawer({ schedule, onClose }: { schedule: Schedule; onClose: () => void }) {
-  const { t } = useI18n();
-  const db = useDB();
-  const navigate = useNavigate();
-  const runs = db.runs.filter((r) => r.schedule_id === schedule.id);
-
-  return (
-    <>
-      <div className="drawer-veil" onClick={onClose} />
-      <div className="drawer">
-        <div className="drawer-head">
-          <div className="drawer-title">{schedule.name}</div>
-          <button className="drawer-close" onClick={onClose}>✕</button>
-        </div>
-        <dl className="kv">
-          <dt>{t('dash.col.bot')}</dt><dd>{schedule.bot_name}</dd>
-          <dt>{t('sch.col.cron')}</dt><dd className="mono">{schedule.cron}</dd>
-          <dt>{t('sch.col.tz')}</dt><dd className="mono">{schedule.timezone}</dd>
-          <dt>{t('sch.f.overlap')}</dt><dd><span className="chip neon">{schedule.overlap_policy}</span></dd>
-          <dt>{t('sch.f.missed')}</dt><dd><span className="chip amber">{schedule.missed_run_policy}</span></dd>
-          <dt>{t('sch.f.jitter')}</dt><dd className="mono">{schedule.jitter_seconds}s</dd>
-          <dt>{t('sch.col.enabled')}</dt>
-          <dd><span className={`toggle${schedule.enabled ? ' on' : ''}`} onClick={() => toggleSchedule(schedule.id)} /></dd>
-        </dl>
-
-        <h3 className="sub-title">{t('sch.runs')}</h3>
-        {runs.length === 0 ? (
-          <div className="empty">—</div>
-        ) : (
-          <table className="data">
-            <thead>
-              <tr>
-                <th>{t('sch.col.run')}</th>
-                <th>{t('sch.col.reason')}</th>
-                <th>{t('sch.col.jitter')}</th>
-                <th>{t('sch.col.task')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {runs.map((r) => (
-                <tr
-                  key={r.id}
-                  className={r.task_id ? '' : 'no-click'}
-                  onClick={() => r.task_id && navigate(`/tasks/${r.task_id}`)}
-                >
-                  <td className="mono">{timeShort(r.created_at)}</td>
-                  <td><span className="chip violet">{r.trigger_reason}</span></td>
-                  <td className="mono">{r.jitter_applied_seconds}s</td>
-                  <td className="mono">{r.task_id ?? t('sch.skipped')}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-    </>
-  );
-}
-
 export default function SchedulesConsole() {
   const { t } = useI18n();
   const db = useDB();
-  const { scheduleId } = useParams();
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const creating = params.get('new') === '1';
   const [flash, setFlash] = useState<string>('');
 
-  const selected = db.schedules.find((s) => s.id === scheduleId) ?? null;
+  useEffect(() => {
+    void refreshScheduleNextRuns();
+    const interval = window.setInterval(() => void refreshScheduleNextRuns(), 60_000);
+    return () => window.clearInterval(interval);
+  }, []);
 
   const trigger = (id: string) => {
     const run = triggerSchedule(id);
@@ -189,39 +157,41 @@ export default function SchedulesConsole() {
       {db.schedules.length === 0 ? (
         <div className="empty" style={{ marginTop: 18 }}>{t('sch.empty')}</div>
       ) : (
-        <table className="data" style={{ marginTop: 18 }}>
-          <thead>
-            <tr>
-              <th>{t('sch.col.name')}</th>
-              <th>{t('dash.col.bot')}</th>
-              <th>{t('sch.col.cron')}</th>
-              <th>{t('sch.col.tz')}</th>
-              <th>{t('sch.col.enabled')}</th>
-              <th>{t('dash.col.actions')}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {db.schedules.map((s) => (
-              <tr key={s.id} onClick={() => navigate(`/schedules/${s.id}`)}>
-                <td className="strong">{s.name}</td>
-                <td>{s.bot_name}</td>
-                <td className="mono">{s.cron}</td>
-                <td className="mono">{s.timezone}</td>
-                <td onClick={(e) => e.stopPropagation()}>
-                  <span className={`toggle${s.enabled ? ' on' : ''}`} onClick={() => toggleSchedule(s.id)} />
-                </td>
-                <td onClick={(e) => e.stopPropagation()}>
-                  <button className="btn sm" onClick={() => trigger(s.id)} disabled={!s.enabled}>
-                    ⏵ {t('sch.trigger')}
-                  </button>
-                </td>
+        <div className="data-scroll" style={{ marginTop: 18 }}>
+          <table className="data schedule-table">
+            <thead>
+              <tr>
+                <th>{t('sch.col.name')}</th>
+                <th>{t('dash.col.bot')}</th>
+                <th>{t('sch.col.cron')}</th>
+                <th>{t('sch.col.tz')}</th>
+                <th className="schedule-next-col">{t('sch.col.nextRun')}</th>
+                <th className="schedule-enabled-col">{t('sch.col.enabled')}</th>
+                <th className="schedule-actions-col">{t('dash.col.actions')}</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {db.schedules.map((s) => (
+                <tr key={s.id} onClick={() => navigate(`/schedules/${s.id}`)}>
+                  <td className="strong">{s.name}</td>
+                  <td>{s.bot_name}</td>
+                  <td className="mono">{s.cron}</td>
+                  <td className="mono">{s.timezone}</td>
+                  <td className="schedule-next-col"><ScheduleNextRun schedule={s} /></td>
+                  <td className="schedule-enabled-col" onClick={(e) => e.stopPropagation()}>
+                    <span className={`toggle${s.enabled ? ' on' : ''}`} onClick={() => toggleSchedule(s.id)} />
+                  </td>
+                  <td className="schedule-actions-col" onClick={(e) => e.stopPropagation()}>
+                    <button className="btn sm" onClick={() => trigger(s.id)} disabled={!s.enabled}>
+                      ⏵ {t('sch.trigger')}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
-
-      {selected && <ScheduleDrawer schedule={selected} onClose={() => navigate('/schedules')} />}
     </>
   );
 }

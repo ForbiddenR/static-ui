@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { Suspense, useEffect } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useI18n, type Lang } from '../i18n';
 import { useTheme } from '../theme';
@@ -98,7 +98,9 @@ export default function Layout() {
           </div>
 
           <main className="content">
-            <Outlet />
+            <Suspense fallback={<div className="route-loading">{t('c.loading')}</div>}>
+              <Outlet />
+            </Suspense>
           </main>
 
           <footer className="footer">

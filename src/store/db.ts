@@ -1,6 +1,8 @@
 // Client-side data layer simulating the Master REST API contracts from docs/.
 // Persisted to localStorage; a tiny pub/sub keeps React views in sync.
 
+import { calculateNextScheduleTimes, validateTimezone } from './scheduleTime';
+
 export type TaskStatus =
   | 'pending' | 'dispatching' | 'running' | 'canceling'
   | 'success' | 'partial_success' | 'failed' | 'canceled' | 'timeout';
@@ -60,6 +62,8 @@ export interface Schedule {
   overlap_policy: 'skip' | 'queue' | 'replace' | 'parallel';
   missed_run_policy: 'skip' | 'run_once';
   jitter_seconds: number;
+  next_planned_at: string | null;
+  next_run_at: string | null;
   created_at: string;
 }
 
@@ -166,8 +170,22 @@ function seed(): DB {
     },
   ];
   const schedules: Schedule[] = [
-    { id: 'sch_nightly_inv', bot_id: botA.id, bot_name: botA.name, name: 'Nightly invoice sync', cron: '0 2 * * *', timezone: 'Asia/Shanghai', enabled: true, overlap_policy: 'skip', missed_run_policy: 'skip', jitter_seconds: 300, created_at: ts },
-    { id: 'sch_hourly_price', bot_id: botB.id, bot_name: botB.name, name: 'Hourly price sweep', cron: '7 * * * *', timezone: 'UTC', enabled: false, overlap_policy: 'skip', missed_run_policy: 'run_once', jitter_seconds: 60, created_at: ts },
+    {
+      // next_* stay null here; the startup refreshScheduleTimes() pass fills
+      // them in without pulling the cron engine into the initial bundle.
+      id: 'sch_nightly_inv', bot_id: botA.id, bot_name: botA.name, name: 'Nightly invoice sync',
+      cron: '0 2 * * *', timezone: 'Asia/Shanghai', enabled: true, overlap_policy: 'skip',
+      missed_run_policy: 'skip', jitter_seconds: 300,
+      next_planned_at: null,
+      next_run_at: null,
+      created_at: ts,
+    },
+    {
+      id: 'sch_hourly_price', bot_id: botB.id, bot_name: botB.name, name: 'Hourly price sweep',
+      cron: '7 * * * *', timezone: 'UTC', enabled: false, overlap_policy: 'skip',
+      missed_run_policy: 'run_once', jitter_seconds: 60,
+      next_planned_at: null, next_run_at: null, created_at: ts,
+    },
   ];
   const runs: ScheduleRun[] = [
     { id: 'srun_1', schedule_id: 'sch_nightly_inv', task_id: 'task_9f2c01', trigger_reason: 'cron', planned_at: ts, jitter_applied_seconds: 127, created_at: ts },
@@ -190,12 +208,71 @@ function seed(): DB {
   return { bots: [botA, botB], versions, tasks, schedules, runs, logs, workers };
 }
 
+// Clears timing on disabled schedules, canonicalizes timezones, and recomputes
+// any missing/lapsed next-run pair. The cron engine (a lazy chunk) is only
+// downloaded when at least one schedule actually needs recomputing.
+export async function refreshScheduleTimes(reference = new Date()): Promise<void> {
+  if (!Array.isArray(db.schedules)) return;
+
+  const referenceMs = reference.getTime();
+  let changed = false;
+  const stale: Schedule[] = [];
+
+  db.schedules.forEach((schedule) => {
+    if (!schedule.enabled) {
+      if (schedule.next_planned_at !== null || schedule.next_run_at !== null) {
+        schedule.next_planned_at = null;
+        schedule.next_run_at = null;
+        changed = true;
+      }
+      return;
+    }
+
+    const timezone = validateTimezone(schedule.timezone);
+    if (timezone && timezone !== schedule.timezone) {
+      schedule.timezone = timezone;
+      changed = true;
+    }
+
+    const plannedMs = schedule.next_planned_at ? Date.parse(schedule.next_planned_at) : Number.NaN;
+    const runMs = schedule.next_run_at ? Date.parse(schedule.next_run_at) : Number.NaN;
+    const hasFuturePair = Boolean(timezone)
+      && Number.isFinite(plannedMs)
+      && Number.isFinite(runMs)
+      && runMs > referenceMs;
+
+    if (!hasFuturePair) stale.push(schedule);
+  });
+
+  for (const schedule of stale) {
+    const timing = await calculateNextScheduleTimes({
+      cron: schedule.cron,
+      timezone: schedule.timezone,
+      jitterSeconds: schedule.jitter_seconds,
+      after: reference,
+    });
+    if (!schedule.enabled) continue; // toggled off while the chunk loaded
+
+    const nextPlannedAt = timing?.next_planned_at ?? null;
+    const nextRunAt = timing?.next_run_at ?? null;
+    if (schedule.next_planned_at !== nextPlannedAt || schedule.next_run_at !== nextRunAt) {
+      schedule.next_planned_at = nextPlannedAt;
+      schedule.next_run_at = nextRunAt;
+      changed = true;
+    }
+  }
+
+  if (changed) emit();
+}
+
 function load(): DB {
   try {
     const raw = localStorage.getItem(KEY);
     if (raw) {
       const parsed = JSON.parse(raw) as DB;
-      if (Array.isArray(parsed.bots) && Array.isArray(parsed.tasks)) return parsed;
+      if (Array.isArray(parsed.bots) && Array.isArray(parsed.tasks)) {
+        return parsed;
+      }
     }
   } catch {
     /* corrupted -> reseed */
@@ -207,9 +284,26 @@ function load(): DB {
 
 export const db: DB = load();
 
-function persist() {
+// Writes are coalesced: bursts of emits (engine ticks, multi-step actions)
+// produce a single synchronous JSON.stringify + localStorage write.
+const PERSIST_DELAY_MS = 200;
+let persistTimer: number | null = null;
+
+function flushPersist() {
+  if (persistTimer === null) return;
+  window.clearTimeout(persistTimer);
+  persistTimer = null;
   localStorage.setItem(KEY, JSON.stringify(db));
 }
+
+function persist() {
+  persistTimer ??= window.setTimeout(flushPersist, PERSIST_DELAY_MS);
+}
+
+window.addEventListener('pagehide', flushPersist);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') flushPersist();
+});
 
 // ---- pub/sub ----
 type Listener = () => void;
@@ -233,11 +327,16 @@ function emit() {
 
 let logSeq = db.logs.reduce((m, l) => Math.max(m, l.seq), 0);
 
+// Bound the log window so long simulation sessions don't inflate localStorage
+// and the serialization cost of every persisted write.
+const LOG_LIMIT = 1000;
+
 export const emitHelpers = {
   emit,
   log(taskId: string, level: LogEntry['level'], source: LogEntry['source'], message: string) {
     logSeq += 1;
     db.logs.push({ id: uid('log'), task_id: taskId, seq: logSeq, level, source, message, created_at: now() });
+    if (db.logs.length > LOG_LIMIT) db.logs.splice(0, db.logs.length - LOG_LIMIT);
   },
   reset() {
     const fresh = seed();
@@ -249,5 +348,10 @@ export const emitHelpers = {
     db.logs = fresh.logs;
     db.workers = fresh.workers;
     emit();
+    void refreshScheduleTimes();
   },
 };
+
+// Fill in stale/missing schedule timing off the critical path; the cron chunk
+// is only fetched when a stored next-run has actually lapsed.
+void refreshScheduleTimes();

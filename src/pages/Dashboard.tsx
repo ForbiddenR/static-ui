@@ -41,8 +41,8 @@ export default function Dashboard() {
 
       <div className="toolbar" style={{ marginTop: 30 }}>
         <div className="left">
-          <button className="btn" onClick={() => navigate('/tasks?new=1')}>+ {t('dash.newtask')}</button>
-          <button className="btn ghost" onClick={() => navigate('/bots?new=1')}>+ {t('dash.newbot')}</button>
+          <button className="btn" onClick={() => navigate('/bots?new=1')}>+ {t('dash.newbot')}</button>
+          <button className="btn ghost" onClick={() => navigate('/tasks?new=1')}>+ {t('dash.newtask')}</button>
           <button className="btn ghost" onClick={() => navigate('/schedules?new=1')}>+ {t('dash.newschedule')}</button>
         </div>
       </div>

@@ -1,11 +1,10 @@
 import { useState, type FormEvent } from 'react';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useI18n } from '../i18n';
 import { useDB } from '../hooks';
 import { PageHeader, Panel } from '../components/ui';
-import { StatusBadge, timeShort } from '../components/console';
-import { createBot, createBotVersion, publishBotVersion, toggleBot, createTask } from '../store/api';
-import type { Bot } from '../store/db';
+import { timeShort } from '../components/console';
+import { createBot, toggleBot } from '../store/api';
 
 function CreateBotForm({ onDone }: { onDone: () => void }) {
   const { t } = useI18n();
@@ -51,114 +50,12 @@ function CreateBotForm({ onDone }: { onDone: () => void }) {
   );
 }
 
-function BotDrawer({ bot, onClose }: { bot: Bot; onClose: () => void }) {
-  const { t } = useI18n();
-  const db = useDB();
-  const navigate = useNavigate();
-  const [version, setVersion] = useState('');
-  const [script, setScript] = useState('');
-  const [err, setErr] = useState('');
-
-  const versions = db.versions.filter((v) => v.bot_id === bot.id);
-
-  const addVersion = (e: FormEvent) => {
-    e.preventDefault();
-    if (!version.trim() || !script.trim()) {
-      setErr(t('bots.err.version'));
-      return;
-    }
-    createBotVersion(bot.id, version.trim(), script.trim());
-    setVersion('');
-    setScript('');
-    setErr('');
-  };
-
-  const run = () => {
-    const task = createTask({ bot_id: bot.id, input_params: {} });
-    if (task) navigate(`/tasks/${task.id}`);
-  };
-
-  return (
-    <>
-      <div className="drawer-veil" onClick={onClose} />
-      <div className="drawer">
-        <div className="drawer-head">
-          <div className="drawer-title">{bot.code} // {bot.name}</div>
-          <button className="drawer-close" onClick={onClose}>✕</button>
-        </div>
-        <dl className="kv">
-          <dt>ID</dt><dd className="mono">{bot.id}</dd>
-          <dt>{t('bots.col.enabled')}</dt>
-          <dd><span className={`toggle${bot.enabled ? ' on' : ''}`} onClick={() => toggleBot(bot.id)} /></dd>
-          <dt>{t('dash.col.created')}</dt><dd className="mono">{timeShort(bot.created_at)}</dd>
-        </dl>
-        <p className="dim">{bot.description || '—'}</p>
-
-        <div className="form-actions">
-          <button className="btn" onClick={run} disabled={!bot.enabled || !bot.current_version_id}>
-            ▶ {t('bots.run')}
-          </button>
-        </div>
-
-        <h3 className="sub-title">{t('bots.detail.versions')}</h3>
-        <table className="data">
-          <thead>
-            <tr>
-              <th>{t('bots.f.version')}</th>
-              <th>{t('bots.f.script')}</th>
-              <th>{t('dash.col.status')}</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {versions.map((v) => (
-              <tr key={v.id} className="no-click">
-                <td className="mono strong">{v.version}</td>
-                <td className="mono">{v.script_file}</td>
-                <td><StatusBadge status={v.status} /></td>
-                <td>
-                  {v.status === 'draft' && (
-                    <button className="btn sm" onClick={() => publishBotVersion(bot.id, v.id)}>
-                      {t('bots.publish')}
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-
-        <h3 className="sub-title">{t('bots.detail.newversion')}</h3>
-        <form onSubmit={addVersion}>
-          <div className="form-grid">
-            <div className="field">
-              <label>{t('bots.f.version')}</label>
-              <input value={version} onChange={(e) => setVersion(e.target.value)} placeholder="v1.3.0" />
-            </div>
-            <div className="field">
-              <label>{t('bots.f.script')}</label>
-              <input value={script} onChange={(e) => setScript(e.target.value)} placeholder="bot_pkg_v13.zip" />
-            </div>
-          </div>
-          {err && <div className="form-error">{err}</div>}
-          <div className="form-actions">
-            <button className="btn sm" type="submit">+ {t('bots.detail.newversion')}</button>
-          </div>
-        </form>
-      </div>
-    </>
-  );
-}
-
 export default function BotsConsole() {
   const { t } = useI18n();
   const db = useDB();
-  const { botId } = useParams();
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const creating = params.get('new') === '1';
-
-  const selected = db.bots.find((b) => b.id === botId) ?? null;
 
   return (
     <>
@@ -205,8 +102,6 @@ export default function BotsConsole() {
           </tbody>
         </table>
       )}
-
-      {selected && <BotDrawer bot={selected} onClose={() => navigate('/bots')} />}
     </>
   );
 }

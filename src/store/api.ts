@@ -1,8 +1,9 @@
 // Simulated Master API — operations mirror the REST contracts in docs/.
 // All data is mocked and held client-side only (see db.ts).
 
-import { db, emitHelpers, now, uid, type Bot, type BotVersion, type Schedule, type ScheduleRun, type Task, type TaskItemStatus } from './db';
+import { db, emitHelpers, now, uid, refreshScheduleTimes, type Bot, type BotVersion, type Schedule, type ScheduleRun, type Task, type TaskItemStatus } from './db';
 import { tickTask, releaseWorker } from './engine';
+import { calculateNextScheduleTimes, validateCron, validateTimezone } from './scheduleTime';
 
 export { tickTask };
 
@@ -119,18 +120,32 @@ export function rerunTask(taskId: string): Task | null {
 }
 
 // ---------- Schedules ----------
-export function createSchedule(input: {
+export async function createSchedule(input: {
   bot_id: string; name: string; cron: string; timezone: string;
   overlap_policy: Schedule['overlap_policy']; missed_run_policy: Schedule['missed_run_policy'];
   jitter_seconds: number;
-}): Schedule | null {
+}): Promise<Schedule | null> {
   const bot = db.bots.find((b) => b.id === input.bot_id);
-  if (!bot) return null;
+  const timezone = validateTimezone(input.timezone);
+  if (!bot || !timezone || !(await validateCron(input.cron, timezone))) return null;
+
+  const timing = await calculateNextScheduleTimes({
+    cron: input.cron,
+    timezone,
+    jitterSeconds: input.jitter_seconds,
+  });
+  if (!timing) return null;
+
   const sch: Schedule = {
     id: uid('sch'),
     bot_name: bot.name,
     ...input,
+    cron: input.cron.trim(),
+    timezone,
+    jitter_seconds: Math.max(0, Math.floor(input.jitter_seconds)),
     enabled: true,
+    next_planned_at: timing.next_planned_at,
+    next_run_at: timing.next_run_at,
     created_at: now(),
   };
   db.schedules.unshift(sch);
@@ -140,10 +155,19 @@ export function createSchedule(input: {
 
 export function toggleSchedule(scheduleId: string): void {
   const sch = db.schedules.find((s) => s.id === scheduleId);
-  if (sch) {
-    sch.enabled = !sch.enabled;
-    emitHelpers.emit();
-  }
+  if (!sch) return;
+
+  sch.enabled = !sch.enabled;
+  sch.next_planned_at = null;
+  sch.next_run_at = null;
+  emitHelpers.emit();
+  // Recompute the next-run pair off the interaction path; the refresh loads
+  // the cron engine lazily and emits again once times are filled in.
+  if (sch.enabled) void refreshScheduleTimes();
+}
+
+export function refreshScheduleNextRuns(reference = new Date()): Promise<void> {
+  return refreshScheduleTimes(reference);
 }
 
 export function triggerSchedule(scheduleId: string): ScheduleRun | null {

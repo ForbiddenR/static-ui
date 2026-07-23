@@ -1,103 +1,14 @@
-import { useEffect } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useI18n } from '../i18n';
 import { useDB } from '../hooks';
 import { PageHeader } from '../components/ui';
-import { StatusBadge, timeShort } from '../components/console';
+import { CapacityBar, timeShort } from '../components/console';
 import { toggleWorker } from '../store/api';
-import type { Worker } from '../store/db';
-
-function CapacityBar({ worker }: { worker: Worker }) {
-  const pct = worker.capacity_max === 0 ? 0 : Math.round((worker.capacity_used / worker.capacity_max) * 100);
-  return (
-    <div style={{ minWidth: 130 }}>
-      <div className="progress">
-        <div className="fill" style={{ width: `${pct}%` }} />
-      </div>
-      <div className="progress-meta">
-        <span>{worker.capacity_used}/{worker.capacity_max}</span>
-        <span>{pct}%</span>
-      </div>
-    </div>
-  );
-}
-
-function WorkerDrawer({ worker, onClose }: { worker: Worker; onClose: () => void }) {
-  const { t } = useI18n();
-  const db = useDB();
-  const navigate = useNavigate();
-  const tasks = db.tasks.filter((task) => task.worker_id === worker.id);
-
-  useEffect(() => {
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', closeOnEscape);
-    return () => window.removeEventListener('keydown', closeOnEscape);
-  }, [onClose]);
-
-  return (
-    <>
-      <div className="drawer-veil" onClick={onClose} />
-      <div className="drawer" role="dialog" aria-modal="true" aria-labelledby="worker-drawer-title">
-        <div className="drawer-head">
-          <div className="drawer-title" id="worker-drawer-title">{worker.name}</div>
-          <button className="drawer-close" onClick={onClose}>✕</button>
-        </div>
-        <div style={{ margin: '8px 0 14px' }}>
-          <span className={`st ${worker.status === 'online' ? 'running' : 'canceled'}`}>
-            {worker.status === 'online' ? t('wkp.online') : t('wkp.offline')}
-          </span>
-          <span className="chip neon" style={{ marginLeft: 8 }}>{t('wkp.grpc')}</span>
-        </div>
-
-        <dl className="kv">
-          <dt>ID</dt><dd className="mono">{worker.id}</dd>
-          <dt>{t('wkp.detail.session')}</dt><dd className="mono">{worker.session_id ?? '—'}</dd>
-          <dt>{t('wkp.col.version')}</dt><dd className="mono">{worker.version}</dd>
-          <dt>{t('wkp.col.tags')}</dt>
-          <dd>{worker.tags.map((tag) => <span key={tag} className="chip violet">{tag}</span>)}</dd>
-          <dt>{t('wkp.col.capacity')}</dt><dd><CapacityBar worker={worker} /></dd>
-          <dt>{t('wkp.col.heartbeat')}</dt><dd className="mono">{timeShort(worker.last_heartbeat_at)}</dd>
-          <dt>{t('wkp.col.enabled')}</dt>
-          <dd><span className={`toggle${worker.enabled ? ' on' : ''}`} onClick={() => toggleWorker(worker.id)} /></dd>
-        </dl>
-
-        <h3 className="sub-title">{t('wkp.detail.tasks')}</h3>
-        {tasks.length === 0 ? (
-          <div className="empty">{t('wkp.detail.notasks')}</div>
-        ) : (
-          <table className="data">
-            <thead>
-              <tr>
-                <th>{t('tasks.col.id')}</th>
-                <th>{t('dash.col.bot')}</th>
-                <th>{t('dash.col.status')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {tasks.map((task) => (
-                <tr key={task.id} onClick={() => navigate(`/tasks/${task.id}`)}>
-                  <td className="mono strong">{task.id}</td>
-                  <td>{task.bot_name}</td>
-                  <td><StatusBadge status={task.status} /></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-    </>
-  );
-}
 
 export default function WorkersConsole() {
   const { t } = useI18n();
   const db = useDB();
-  const { workerId } = useParams();
   const navigate = useNavigate();
-
-  const selected = db.workers.find((w) => w.id === workerId) ?? null;
 
   return (
     <>
@@ -141,8 +52,6 @@ export default function WorkersConsole() {
           </table>
         </div>
       )}
-
-      {selected && <WorkerDrawer worker={selected} onClose={() => navigate('/workers')} />}
     </>
   );
 }

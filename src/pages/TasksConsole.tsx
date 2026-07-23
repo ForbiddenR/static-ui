@@ -1,11 +1,10 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useState, type FormEvent } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useI18n } from '../i18n';
 import { useDB } from '../hooks';
 import { PageHeader, Panel } from '../components/ui';
 import { StatusBadge, Progress, timeShort } from '../components/console';
-import { cancelTask, createTask, logsForTask, retryTask, rerunTask } from '../store/api';
-import type { Task } from '../store/db';
+import { createTask } from '../store/api';
 
 const TERMINAL = new Set(['success', 'partial_success', 'failed', 'canceled', 'timeout']);
 
@@ -63,120 +62,14 @@ function CreateTaskForm({ onDone, onCreated }: { onDone: () => void; onCreated: 
   );
 }
 
-function TaskDrawer({ task, onClose }: { task: Task; onClose: () => void }) {
-  const { t } = useI18n();
-  const db = useDB();
-  const navigate = useNavigate();
-  const termRef = useRef<HTMLDivElement>(null);
-  const logs = logsForTask(task.id);
-
-  useEffect(() => {
-    const el = termRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [logs.length]);
-
-  const active = !TERMINAL.has(task.status);
-  const retryable = TERMINAL.has(task.status);
-
-  return (
-    <>
-      <div className="drawer-veil" onClick={onClose} />
-      <div className="drawer">
-        <div className="drawer-head">
-          <div className="drawer-title">{task.id}</div>
-          <button className="drawer-close" onClick={onClose}>✕</button>
-        </div>
-        <div style={{ margin: '8px 0 14px' }}>
-          <StatusBadge status={task.status} />
-          <span className="chip violet" style={{ marginLeft: 8 }}>{task.run_type}</span>
-          {task.error_code && <span className="chip red" style={{ marginLeft: 8 }}>{task.error_code}</span>}
-        </div>
-
-        <Progress task={task} />
-
-        <dl className="kv">
-          <dt>{t('dash.col.bot')}</dt><dd>{task.bot_name}</dd>
-          <dt>{t('tasks.detail.worker')}</dt>
-          <dd className="mono">
-            {task.worker_id ? (
-              <button className="btn ghost sm" onClick={() => navigate(`/workers/${task.worker_id}`)}>
-                {db.workers.find((worker) => worker.id === task.worker_id)?.name ?? task.worker_id}
-              </button>
-            ) : '—'}
-          </dd>
-          <dt>{t('tasks.f.params')}</dt><dd className="mono">{JSON.stringify(task.input_params)}</dd>
-          {task.source_task_id && (
-            <>
-              <dt>{t('tasks.detail.source')}</dt>
-              <dd className="mono">{task.source_task_id}</dd>
-            </>
-          )}
-          <dt>{t('dash.col.created')}</dt><dd className="mono">{timeShort(task.created_at)}</dd>
-          {task.finished_at && (
-            <>
-              <dt>{t('tasks.detail.finished')}</dt><dd className="mono">{timeShort(task.finished_at)}</dd>
-            </>
-          )}
-        </dl>
-
-        <div className="form-actions">
-          {active && (
-            <button className="btn danger sm" onClick={() => cancelTask(task.id)}>■ {t('tasks.cancel')}</button>
-          )}
-          {retryable && (
-            <>
-              <button className="btn sm" onClick={() => { const n = retryTask(task.id); if (n) navigate(`/tasks/${n.id}`); }}>
-                ↻ {t('tasks.retry')}
-              </button>
-              <button className="btn ghost sm" onClick={() => { const n = rerunTask(task.id); if (n) navigate(`/tasks/${n.id}`); }}>
-                ⏵ {t('tasks.rerun')}
-              </button>
-            </>
-          )}
-        </div>
-
-        <h3 className="sub-title">{t('tasks.detail.items')}</h3>
-        <table className="data">
-          <thead>
-            <tr><th>{t('tasks.item.key')}</th><th>{t('tasks.item.status')}</th></tr>
-          </thead>
-          <tbody>
-            {task.items.map((it) => (
-              <tr key={it.id} className="no-click">
-                <td className="mono">{it.key}</td>
-                <td><StatusBadge status={it.status} /></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-
-        <h3 className="sub-title">{t('tasks.detail.logs')}</h3>
-        <div className="terminal" ref={termRef}>
-          {logs.map((l) => (
-            <div className="tline" key={l.id}>
-              <span className="tseq">{String(l.seq).padStart(3, '0')}</span>
-              <span className={`lv ${l.level}`}>{l.level}</span>
-              <span className="src">[{l.source}]</span>
-              <span className="msg">{l.message}</span>
-            </div>
-          ))}
-          {active && <div className="tline"><span className="tseq">···</span><span className="msg" style={{ color: 'var(--neon)' }}>▌</span></div>}
-        </div>
-      </div>
-    </>
-  );
-}
-
 export default function TasksConsole() {
   const { t } = useI18n();
   const db = useDB();
-  const { taskId } = useParams();
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const creating = params.get('new') === '1';
   const [filter, setFilter] = useState<'all' | 'active' | 'terminal'>('all');
 
-  const selected = db.tasks.find((x) => x.id === taskId) ?? null;
   const shown = db.tasks.filter((x) =>
     filter === 'all' ? true : filter === 'active' ? !TERMINAL.has(x.status) : TERMINAL.has(x.status),
   );
@@ -235,8 +128,6 @@ export default function TasksConsole() {
           </tbody>
         </table>
       )}
-
-      {selected && <TaskDrawer task={selected} onClose={() => navigate('/tasks')} />}
     </>
   );
 }
