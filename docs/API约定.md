@@ -1,4 +1,4 @@
-# Bot 自动化任务平台 V1：REST 通用约定
+# JobOps V1：REST 通用约定
 
 > [本文件角色]
 > 本文件只定义跨资源 REST API 的传输格式、成功响应、分页、过滤和大文件入口。资源字段由对应主题文档负责；失败响应结构、HTTP 映射和全部 `error.code` 由 [错误标识注册表](错误标识注册表.md#error-registry) 唯一定义；敏感字段及脱敏规则由 [安全基线](安全基线.md#sensitive-field-registry) 唯一定义。
@@ -6,7 +6,7 @@
 
 ## 快速导航
 
-[REST 约定](#rest-conventions) · [失败响应权威](#error-response-authority) · [分页与过滤](#pagination-filtering) · [Source File](./源文件.md#source-file-api)
+[REST 约定](#rest-conventions) · [V1 兼容边界](#v1-compatibility-boundary) · [失败响应权威](#error-response-authority) · [分页与过滤](#pagination-filtering) · [Source File](./源文件.md#source-file-api)
 
 <a id="rest-conventions"></a>
 ## REST 通用约定
@@ -23,6 +23,27 @@
 | 空值 | 不存在或无值用 `null`，不要用空字符串表达未设置 |
 | 大文件上传 | 统一走 [Source File API](./源文件.md#source-file-api)；使用 `multipart/form-data`；普通 JSON API 不直接传大文件内容 |
 | 敏感字段 | 不在本文件重复列举；字段识别和处理以 [敏感字段注册表](安全基线.md#sensitive-field-registry) 为准 |
+
+<a id="v1-compatibility-boundary"></a>
+### V1 兼容边界
+
+JobOps 在领域和用户界面中使用 **Job Definition（作业定义）** 与 **Job Definition Version（作业定义版本）**。这一术语迁移不改变 V1 已发布的接口、存储、事件、环境变量或 SDK 字面量。
+
+以下是明确保留的 V1 兼容字面量，调用方不得因术语迁移而改名或推导替代值：
+
+```text
+/api/bots
+bots
+bot_versions
+bot_id / bot_code / bot_version_id / bot_snapshot
+BOT_*（包括 BOT_ID、BOT_CODE、BOT_RUNTIME_ADDR）
+bot_sdk
+bot_script
+bot_disabled
+bot_* IDs
+```
+
+其中，`BOT_*` 代码和上述字段、路径、表名、SDK 名称及 ID 前缀仍是 V1 协议契约；文档中的 Job Definition / 作业定义仅替换概念与面向用户的名称。任何 V2 命名边界、双写或弃用计划必须另行发布，不能仅据本文档变更推断。
 
 成功响应建议统一包一层：
 

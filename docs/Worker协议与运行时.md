@@ -1,4 +1,4 @@
-# Bot 自动化任务平台 V1：Workers
+# JobOps V1：Workers
 
 Worker 是实际执行 Task 的执行节点：它主动通过 gRPC 双向流连接 Master，上报心跳、容量和运行报告，并接收派发、取消等指令。管理页面可以查看每个 Worker 的在线状态、主机名、支持的 runtime 和能力标签、当前负载与空闲槽位、最近心跳时间，以及禁用 / 启用调度；其中最重要的参数是 `max_concurrency`（最大并发 Task 数）和心跳间隔 / 超时（默认 5 秒上报、15 秒未上报判定离线），它们直接决定调度分配和故障检测。Worker 本机的 Runtime 与 Python SDK 负责启动脚本进程并把 TaskItem、Result、Artifact、Log 汇聚上报给 Master。
 
@@ -457,8 +457,8 @@ abort 后 Worker 必须停止本地进程并移除本地 ref
 |---|---|---:|---|
 | `assignment_id` | string | 是 | 派发 ID，fencing 主键 |
 | `task_id` | string | 是 | Task ID |
-| `bot_id` | string | 是 | Bot ID |
-| `bot_code` | string | 是 | Bot code |
+| `bot_id` | string | 是 | Job Definition ID |
+| `bot_code` | string | 是 | Job Definition code |
 | `bot_version_id` | string | 否 | 版本 ID |
 | `entrypoint` | string | 是 | 入口文件，例如 `main.py` |
 | `script_source` | string | 是 | 第一版 `upload` |
@@ -467,7 +467,7 @@ abort 后 Worker 必须停止本地进程并移除本地 ref
 | `input_source` | string | 是 | `file` / `params` / `task_items` / `none` |
 | `input_file_id` | string | 否 | 输入文件 ID |
 | `input_download` | object | 否 | 输入文件获取方式；`input_source=file` 时必填 |
-| `input_params` | object | 否 | JSON 参数；敏感字段应已按 Bot 配置处理 |
+| `input_params` | object | 否 | JSON 参数；敏感字段应已按 Job Definition 配置处理 |
 | `config` | object | 否 | 运行配置 |
 | `requirements` | object | 否 | 运行要求快照 |
 | `timeout_seconds` | integer | 否 | Task 整体超时 |
@@ -573,7 +573,7 @@ Master 在发送 AbortAssignment 前应先使该 assignment 在状态机中失�
 Task.status = pending
 next_dispatch_at <= now
 cancel_requested_at 为空
-BotVersion / 脚本 Source File / 输入引用仍可用于执行
+Job Definition Version / 脚本 Source File / 输入引用仍可用于执行
 dispatch_attempts < max_dispatch_attempts
 ```
 

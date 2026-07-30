@@ -1,7 +1,7 @@
 // Mock execution engine: advances active tasks through the real lifecycle
 // pending -> dispatching -> running -> terminal arbitration per the Task spec.
 
-import { db, emitHelpers, now } from './db';
+import { db, emitHelpers, now, type TaskItemStatus } from './db';
 
 const TERMINAL = new Set(['success', 'partial_success', 'failed', 'canceled', 'timeout']);
 
@@ -21,7 +21,7 @@ export function tickTask(taskId: string): void {
     candidate.current_task_ids.push(task.id);
     candidate.last_heartbeat_at = now();
     emitHelpers.log(task.id, 'info', 'master', `capacity reserved on ${candidate.name}; AssignTask sent (session=${candidate.session_id})`);
-    emitHelpers.workerLog(candidate.id, 'info', 'dispatch', `assignment ${task.id} accepted (bot=${task.bot_name}); slot ${candidate.capacity_used}/${candidate.capacity_max}`);
+    emitHelpers.workerLog(candidate.id, 'info', 'dispatch', `assignment ${task.id} accepted (job_definition=${task.bot_code || task.bot_id}); slot ${candidate.capacity_used}/${candidate.capacity_max}`);
   } else if (task.status === 'dispatching') {
     task.status = 'running';
     const w = db.workers.find((x) => x.id === task.worker_id);
@@ -54,14 +54,24 @@ export function tickTask(taskId: string): void {
 
     const allDone = task.items.every((i) => !['pending', 'running'].includes(i.status));
     if (allDone) {
-      // terminal arbitration: error_items vs non_error_completed_items
-      const { failed, success, skipped } = task.statistics;
-      const errorItems = failed;
+      // Terminal arbitration uses the authoritative TaskItem aggregate.
+      const count = (status: TaskItemStatus) => task.items.filter((item) => item.status === status).length;
+      const success = count('success');
+      const failed = count('failed');
+      const skipped = count('skipped');
+      const timeout = count('timeout');
+      const canceled = count('canceled');
+      task.statistics = {
+        total: task.items.length, success, failed, skipped, timeout, canceled,
+        pending: count('pending'), running: count('running'),
+        completed: success + failed + skipped + timeout + canceled,
+      };
+      const errorItems = failed + timeout;
       const nonError = success + skipped;
       if (errorItems === 0) task.status = 'success';
       else if (nonError > 0) task.status = 'partial_success';
       else task.status = 'failed';
-      task.finished_at = now();
+      task.finished_at = task.updated_at = now();
       releaseWorker(task);
       emitHelpers.log(task.id, 'info', 'master', `TaskFinished exit_code=0; terminal state arbitrated: ${task.status}`);
       if (task.worker_id) {

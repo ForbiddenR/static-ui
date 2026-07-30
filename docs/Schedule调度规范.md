@@ -1,6 +1,6 @@
-# Bot 自动化任务平台 V1：Schedules
+# JobOps V1：Schedules
 
-Schedule 让 Bot 按 cron 规则定时自动创建 Task，无需人工每次手动触发。用户可以配置执行时区、随机延迟（jitter）、上一轮未完成时的重叠策略和错过触发时间的补跑策略；每一次触发决策都会生成一条 ScheduleRun 记录，便于追溯“什么时候触发了、是否创建了 Task、为什么被跳过”。Schedule 也支持随时手动触发一次，不影响既有 cron 计划。
+Schedule 让 Job Definition 按 cron 规则定时自动创建 Task，无需人工每次手动触发。用户可以配置执行时区、随机延迟（jitter）、上一轮未完成时的重叠策略和错过触发时间的补跑策略；每一次触发决策都会生成一条 ScheduleRun 记录，便于追溯“什么时候触发了、是否创建了 Task、为什么被跳过”。Schedule 也支持随时手动触发一次，不影响既有 cron 计划。
 
 > [本文件角色]
 > 本文件定义 Schedule / ScheduleRun 的触发规则、重叠与 missed run 策略、jitter、REST 契约和持久化映射。生成的 Task 仍必须遵守 [Task执行规范.md](Task执行规范.md#task-status) 的状态机和终态规则。
@@ -19,12 +19,12 @@ Schedule 让 Bot 按 cron 规则定时自动创建 Task，无需人工每次手�
 Schedule 是定时触发规则，不是执行记录。
 
 > [重复摘要｜非规范性]
-> 下列关系用于说明资源关联，不重定义 Bot 或 Task；Bot 与 Task 的核心含义见 [核心模型](平台概览.md#core-model)，Schedule / ScheduleRun 的字段及行为由本节后续小节定义。
+> 下列关系用于说明资源关联，不重定义 Job Definition 或 Task；Job Definition 与 Task 的核心含义见 [核心模型](平台概览.md#core-model)，Schedule / ScheduleRun 的字段及行为由本节后续小节定义。
 
 关系：
 
 ```text
-Bot -> Schedule -> ScheduleRun -> Task
+Job Definition -> Schedule -> ScheduleRun -> Task
 ```
 
 ### 接口索引
@@ -52,8 +52,8 @@ Bot -> Schedule -> ScheduleRun -> Task
 | `id` | string | 是 | Schedule ID |
 | `name` | string | 是 | 定时任务名称 |
 | `description` | string | 否 | 说明 |
-| `bot_id` | string | 是 | 被触发的 Bot |
-| `bot_version_id` | string | 否 | 固定版本；为空表示触发时使用 Bot 当前启用版本 |
+| `bot_id` | string | 是 | 被触发的 Job Definition |
+| `bot_version_id` | string | 否 | 固定版本；为空表示触发时使用 Job Definition 当前启用版本 |
 | `cron` | string | 是 | 标准 5 段 cron 表达式 |
 | `timezone` | string | 是 | cron 解释时区，例如 `Asia/Shanghai` |
 | `input_source` | string | 是 | 每次触发创建 Task 时的输入来源 |
@@ -197,7 +197,7 @@ POST /api/schedules
 |---|---|---:|---|---|
 | `name` | string | 是 | - | Schedule 名称 |
 | `description` | string | 否 | `null` | 描述 |
-| `bot_id` | string | 是 | - | 目标 Bot |
+| `bot_id` | string | 是 | - | 目标 Job Definition |
 | `bot_version_id` | string | 否 | `null` | 固定执行版本 |
 | `cron` | string | 是 | - | 5 段 cron |
 | `timezone` | string | 否 | `Asia/Shanghai` | 时区 |
@@ -243,7 +243,7 @@ Query 字段：
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| `bot_id` | string | 按 Bot 过滤 |
+| `bot_id` | string | 按 Job Definition 过滤 |
 | `status` | string | `enabled`、`disabled`、`archived` |
 | `q` | string | 搜索 name、description |
 | `include_archived` | boolean | 是否包含归档数据，默认 false |
@@ -275,7 +275,7 @@ can_enable
 can_disable
 ```
 
-这些操作能力字段由后端根据 Schedule 状态、关联 Bot 状态和当前用户权限计算，不是持久化字段。
+这些操作能力字段由后端根据 Schedule 状态、关联 Job Definition 状态和当前用户权限计算，不是持久化字段。
 
 <a id="update-schedule"></a>
 ### 更新 / 启停 Schedule
@@ -364,7 +364,7 @@ ScheduleRun 记录每一次“触发决策”，不只记录成功创建 Task �
 |---|---|---:|---|
 | `id` | string | 是 | ScheduleRun ID |
 | `schedule_id` | string | 是 | 所属 Schedule |
-| `bot_id` | string | 是 | 冗余 Bot ID |
+| `bot_id` | string | 是 | 冗余 Job Definition ID |
 | `planned_at` | string | 是 | cron 按时区计算出的理论触发时间，也称 nominal time |
 | `scheduled_at` | string | 是 | 应用随机延迟后的实际计划执行时间 |
 | `jitter_seconds` | integer | 是 | 本次 ScheduleRun 使用的随机延迟上限快照 |
@@ -392,7 +392,7 @@ ScheduleRunStatus：
 | reason | 含义 |
 |---|---|
 | `previous_task_running` | 上一轮 active Task 未结束，且 overlap_policy=skip |
-| `bot_disabled` | Bot 当前不可运行 |
+| `bot_disabled` | Job Definition 当前不可运行 |
 | `invalid_input` | Schedule 配置的输入非法 |
 | `create_task_failed` | 创建 Task 失败 |
 | `missed_run_skipped` | 错过触发且策略选择跳过 |

@@ -3,7 +3,7 @@ import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useI18n, type Lang } from '../i18n';
 import { useTheme } from '../theme';
 import { useDB } from '../hooks';
-import { tickTask, tickWorkers, resetMockData } from '../store/api';
+import { tickSchedules, tickTask, tickWorkers, resetMockData } from '../store/api';
 
 interface NavItem {
   to: string;
@@ -14,7 +14,7 @@ interface NavItem {
 
 const NAV: NavItem[] = [
   { to: '/', key: 'nav.dashboard', idx: '00' },
-  { to: '/bots', key: 'nav.bots', idx: '01', section: 'nav.section.ops' },
+  { to: '/job-definitions', key: 'nav.jobDefinitions', idx: '01', section: 'nav.section.ops' },
   { to: '/tasks', key: 'nav.tasks', idx: '02' },
   { to: '/schedules', key: 'nav.schedules', idx: '03' },
   { to: '/workers', key: 'nav.workers', idx: '04', section: 'nav.section.observe' },
@@ -28,7 +28,9 @@ export default function Layout() {
 
   // Mock execution engine: advance active tasks and worker telemetry on a heartbeat.
   useEffect(() => {
+    void tickSchedules();
     const timer = window.setInterval(() => {
+      void tickSchedules();
       db.tasks
         .filter((x) => x.status === 'pending' || x.status === 'dispatching' || x.status === 'running')
         .forEach((x) => tickTask(x.id));
@@ -46,7 +48,7 @@ export default function Layout() {
       <div className="shell">
         <aside className="sidebar">
           <div className="brand">
-            <div className="brand-name">BOTOPS_</div>
+            <div className="brand-name">JOBOPS_</div>
             <div className="brand-sub">{t('brand.sub')}</div>
           </div>
           <nav>
@@ -72,7 +74,7 @@ export default function Layout() {
         <div className="main">
           <div className="topbar">
             <div className="topbar-path">
-              ~/botops<b>{location.pathname}</b>
+              ~/jobops<b>{location.pathname}</b>
             </div>
             <div className="topbar-controls">
               <span className="chip green" style={{ cursor: 'default' }}>

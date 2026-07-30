@@ -1,4 +1,4 @@
-# Bot 自动化任务平台 V1：MVP 范围
+# JobOps V1：MVP 范围
 
 > [本文件角色]
 > 本文件只决定第一版实施范围、简化实现、暂不实施项和推荐里程碑，不重新定义资源、状态、接口、消息或数据表语义。
@@ -6,7 +6,7 @@
 
 ## 快速导航
 
-[MVP 范围](#mvp-scope) · [Bot](Bot规范.md#bot-model) · [Task](Task执行规范.md#task-model) · [Worker](Worker协议与运行时.md#worker-protocol) · [Schedule](Schedule调度规范.md#schedule-api) · [输出资源](结果-产物-日志.md#result-artifact-log-api)
+[MVP 范围](#mvp-scope) · [作业定义](作业定义规范.md#job-definition-model) · [Task](Task执行规范.md#task-model) · [Worker](Worker协议与运行时.md#worker-protocol) · [Schedule](Schedule调度规范.md#schedule-api) · [输出资源](结果-产物-日志.md#result-artifact-log-api)
 
 <a id="mvp-scope"></a>
 ## 第一版 MVP 范围裁剪
@@ -18,7 +18,7 @@
 
 | 能力组 | 第一版范围 | 权威来源 |
 |---|---|---|
-| Bot 与脚本版本 | Source File 脚本包上传；Bot 基础管理；BotVersion 创建、查询和发布 | [Bot 规范](Bot规范.md#bot-api)、[Source File](./源文件.md#source-file-api) |
+| Job Definition 与脚本版本 | Source File 脚本包上传；Job Definition 基础管理；Job Definition Version 创建、查询和发布 | [作业定义规范](作业定义规范.md#job-definition-api)、[Source File](./源文件.md#source-file-api) |
 | Task 执行 | Task 创建、查询、取消、重试、重新执行、恢复派发；Task 终态裁定 | [Task API](Task执行规范.md#task-api)、[Task 状态机](Task执行规范.md#task-status) |
 | 调度与 Worker | Task 队列、Worker 匹配、容量预约、派发握手、deadline、派发前回收与 fencing | [Worker 调度](Worker协议与运行时.md#worker-dispatch)、[Worker 协议](Worker协议与运行时.md#worker-protocol) |
 | Worker 运行闭环 | gRPC 双向 Streaming、重连对账、Worker 管理 REST、本机 Runtime 和 Python SDK 基础能力 | [Worker 协议与运行时](Worker协议与运行时.md#worker-protocol) |
@@ -35,7 +35,7 @@ script_source 只支持 upload
 storage_backend 只支持 local
 Schedule overlap_policy 重点实现 skip；非 MVP overlap / missed-run 组合语义由 [ALIGN-008](待对齐问题.md#align-008) 跟踪
 missed_run_policy 默认 skip（可选配置 run_once）
-BotVersion 采用 draft / published + 单一 current version + publish 接口
+Job Definition Version 采用 draft / published + 单一 current version + publish 接口
 权限先做基础用户 / 管理员
 日志先入库，不接 Loki / OpenSearch
 SDK notify / secrets 只预留
@@ -63,11 +63,11 @@ Result 高级导出
 
 #### 里程碑 1：资源基础与创建链路
 
-- 建立 Bot、BotVersion、Task、Source File 的最小持久化和 API 闭环。
+- 建立 Job Definition、Job Definition Version、Task、Source File 的最小持久化和 API 闭环。
 - 完成脚本包与 Task 输入文件上传、版本发布和 Task 创建。
-- 建立 BotVersion 当前版本一致性和 Task 状态机测试。
+- 建立 Job Definition Version 当前版本一致性和 Task 状态机测试。
 
-权威来源：[Bot 规范](Bot规范.md#bot-api)、[Task API](Task执行规范.md#task-api)、[Source File](./源文件.md#source-file-api)。
+权威来源：[作业定义规范](作业定义规范.md#job-definition-api)、[Task API](Task执行规范.md#task-api)、[Source File](./源文件.md#source-file-api)。
 
 #### 里程碑 2：Worker 执行与派发闭环
 

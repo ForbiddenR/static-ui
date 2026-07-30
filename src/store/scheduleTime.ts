@@ -45,6 +45,13 @@ export async function validateCron(value: string, timezone: string): Promise<boo
   }
 }
 
+export function scheduleJitterSeconds(plannedAt: string, scheduledAt: string): number {
+  const plannedMs = Date.parse(plannedAt);
+  const scheduledMs = Date.parse(scheduledAt);
+  if (!Number.isFinite(plannedMs) || !Number.isFinite(scheduledMs) || scheduledMs < plannedMs) return 0;
+  return Math.max(0, Math.round((scheduledMs - plannedMs) / 1000));
+}
+
 export async function calculateNextScheduleTimes(input: {
   cron: string;
   timezone: string;

@@ -252,7 +252,7 @@ export default function WorkerDetail() {
             <thead>
               <tr>
                 <th>{t('tasks.col.id')}</th>
-                <th>{t('dash.col.bot')}</th>
+                <th>{t('dash.col.jobDefinition')}</th>
                 <th>{t('tasks.col.runtype')}</th>
                 <th>{t('dash.col.status')}</th>
                 <th>{t('dash.col.progress')}</th>
@@ -268,7 +268,7 @@ export default function WorkerDetail() {
                       <span className="chip neon worker-current-chip">{t('wkp.detail.current')}</span>
                     )}
                   </td>
-                  <td>{task.bot_name}</td>
+                  <td>{task.bot_code || task.bot_id}</td>
                   <td><span className="chip violet">{task.run_type}</span></td>
                   <td><StatusBadge status={task.status} /></td>
                   <td className="worker-task-progress"><Progress task={task} /></td>

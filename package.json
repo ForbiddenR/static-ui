@@ -1,11 +1,12 @@
 {
-  "name": "botops-platform-showcase",
+  "name": "jobops-platform-showcase",
   "version": "1.0.0",
   "private": true,
-  "description": "Cyberpunk feature showcase for the Bot Automation Task Platform V1",
+  "description": "Cyberpunk feature showcase for the Job Definition Execution Platform V1",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
+    "test": "vitest run",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -19,6 +20,7 @@
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",
     "typescript": "^5.5.4",
-    "vite": "^5.4.0"
+    "vite": "^5.4.0",
+    "vitest": "^2.1.9"
   }
 }

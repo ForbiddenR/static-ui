@@ -9,7 +9,12 @@ export function StatusBadge({ status }: { status: string }) {
 }
 
 export function Progress({ task }: { task: Task }) {
-  const done = task.statistics.success + task.statistics.failed + task.statistics.skipped;
+  const done = task.statistics.completed
+    ?? task.statistics.success
+      + task.statistics.failed
+      + task.statistics.skipped
+      + (task.statistics.timeout ?? 0)
+      + (task.statistics.canceled ?? 0);
   const pct = task.statistics.total === 0 ? 100 : Math.round((done / task.statistics.total) * 100);
   return (
     <div>

@@ -1,4 +1,4 @@
-/* ============ BOTOPS Cyberpunk Design System ============ */
+/* ============ JOBOPS Cyberpunk Design System ============ */
 
 :root {
   --font-mono: 'JetBrains Mono', 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
@@ -566,7 +566,21 @@ ul.spec-list li b { color: var(--text); }
   text-transform: uppercase;
 }
 .btn:hover { box-shadow: var(--shadow-glow); background: var(--neon); color: var(--bg); }
-.btn:disabled { opacity: 0.35; cursor: not-allowed; }
+.btn:focus-visible, .ctrl-btn:focus-visible {
+  outline: 1px solid var(--neon);
+  outline-offset: 3px;
+  box-shadow: var(--shadow-glow);
+}
+.btn:disabled, .ctrl-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.btn:disabled:hover, .ctrl-btn:disabled:hover {
+  background: transparent;
+  color: var(--text-dim);
+  border-color: var(--border);
+  box-shadow: none;
+}
 .btn.danger { color: var(--red); border-color: var(--red); background: transparent; }
 .btn.danger:hover { background: var(--red); color: #fff; box-shadow: 0 0 14px rgba(255, 59, 92, 0.4); }
 .btn.ghost { background: transparent; color: var(--text-dim); border-color: var(--border); }
@@ -635,7 +649,8 @@ ul.spec-list li b { color: var(--text); }
 .st.canceled { color: var(--text-faint); }
 .st.timeout { color: var(--magenta); border-color: var(--magenta); }
 .st.draft { color: var(--text-dim); }
-.st.published { color: var(--green); border-color: var(--green); }
+.st.published, .st.task_created { color: var(--green); border-color: var(--green); }
+.st.skipped { color: var(--amber); border-color: var(--amber); }
 @keyframes pulse { 50% { opacity: 0.45; } }
 
 /* Data table */
@@ -686,6 +701,12 @@ table.data tbody tr.no-click { cursor: default; }
 }
 .toggle.on { background: var(--neon-soft); }
 .toggle.on::after { left: 22px; background: var(--neon); box-shadow: 0 0 8px var(--neon-glow); }
+.toggle:focus-visible {
+  outline: 1px solid var(--neon);
+  outline-offset: 3px;
+  box-shadow: var(--shadow-glow);
+}
+.toggle:disabled { cursor: not-allowed; opacity: 0.4; }
 
 /* ---- Full-page detail records ---- */
 .back-link {
@@ -838,6 +859,13 @@ table.data tbody tr.no-click { cursor: default; }
   outline-offset: 3px;
   box-shadow: var(--shadow-glow);
 }
+.relationship-link {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
+.current-version { box-shadow: inset 2px 0 0 var(--magenta); }
 
 /* Worker telemetry tiles: single-series sparklines, one accent hue; identity
    lives in the tile label and the direct-labeled value, never in color alone. */
@@ -972,9 +1000,9 @@ table.data tbody tr.no-click { cursor: default; }
   min-width: 1000px;
   table-layout: fixed;
 }
-/* Machine-value columns hug their content; the unspecified name/bot columns
-   absorb the leftover width so slack never opens up between NEXT RUN and the
-   enabled toggle. */
+/* Machine-value columns hug their content; the unspecified name/Job Definition
+   columns absorb the leftover width so slack never opens up between NEXT RUN
+   and the enabled toggle. */
 .schedule-table th:nth-child(3) { width: 125px; }
 .schedule-table th:nth-child(4) { width: 130px; }
 .schedule-table th:nth-child(5) { width: 175px; }
@@ -993,6 +1021,14 @@ table.data td.schedule-actions-col {
 .schedule-enabled-col .toggle {
   display: inline-block;
   vertical-align: middle;
+}
+.schedule-run-table { min-width: 760px; }
+@media (max-width: 700px) {
+  .data-scroll { margin-right: -20px; padding-right: 20px; }
+  .schedule-table { min-width: 900px; }
+  .schedule-run-table { min-width: 700px; }
+  table.data.schedule-run-table th,
+  table.data.schedule-run-table td { padding: 8px 10px; }
 }
 
 .empty {

@@ -18,7 +18,7 @@ export default function Dashboard() {
   const recent = db.tasks.slice(0, 6);
 
   const stats: Array<[string, string, string]> = [
-    [String(db.bots.length), t('dash.bots'), '/bots'],
+    [String(db.bots.length), t('dash.jobDefinitions'), '/job-definitions'],
     [String(active), t('dash.active'), '/tasks'],
     [String(succeeded), t('dash.success'), '/tasks'],
     [String(failed), t('dash.failed'), '/tasks'],
@@ -41,7 +41,7 @@ export default function Dashboard() {
 
       <div className="toolbar" style={{ marginTop: 30 }}>
         <div className="left">
-          <button className="btn" onClick={() => navigate('/bots?new=1')}>+ {t('dash.newbot')}</button>
+          <button className="btn" onClick={() => navigate('/job-definitions?new=1')}>+ {t('dash.newJobDefinition')}</button>
           <button className="btn ghost" onClick={() => navigate('/tasks?new=1')}>+ {t('dash.newtask')}</button>
           <button className="btn ghost" onClick={() => navigate('/schedules?new=1')}>+ {t('dash.newschedule')}</button>
         </div>
@@ -59,7 +59,7 @@ export default function Dashboard() {
           <thead>
             <tr>
               <th>{t('dash.col.task')}</th>
-              <th>{t('dash.col.bot')}</th>
+              <th>{t('dash.col.jobDefinition')}</th>
               <th>{t('dash.col.status')}</th>
               <th>{t('dash.col.progress')}</th>
               <th>{t('dash.col.created')}</th>
@@ -69,7 +69,7 @@ export default function Dashboard() {
             {recent.map((task) => (
               <tr key={task.id} onClick={() => navigate(`/tasks/${task.id}`)}>
                 <td className="mono strong">{task.id}</td>
-                <td>{task.bot_name}</td>
+                <td>{task.bot_code || task.bot_id}</td>
                 <td><StatusBadge status={task.status} /></td>
                 <td style={{ minWidth: 140 }}><Progress task={task} /></td>
                 <td className="mono">{timeShort(task.created_at)}</td>

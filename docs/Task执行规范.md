@@ -1,4 +1,4 @@
-# Bot 自动化任务平台 V1：Tasks
+# JobOps V1：Tasks
 
 > [本文件角色]
 > 本文件是 Task、TaskItem、Task.status、TaskItem.status、终态裁定、统计和 Task/TaskItem REST 契约的唯一规范来源。Worker 消息只传输本文件定义的语义，Schedule 只引用本文件的 active Task 状态。
@@ -13,23 +13,23 @@
 
 ### Task
 
-`Task` 是基于某个 `BotVersion` 创建的一次执行实例，表示平台现在或曾经执行过的一次完整脚本运行。Task 不是 Bot 定义本身，也不是可复用的脚本版本。
+`Task` 是基于某个 `Job Definition Version` 创建的一次执行实例，表示平台现在或曾经执行过的一次完整脚本运行。Task 不是 Job Definition 定义本身，也不是可复用的脚本版本。
 
 第一版中：
 
 ```text
-Task = BotVersion + 本次输入 + 本次运行配置 + 执行状态 + 运行结果
+Task = Job Definition Version + 本次输入 + 本次运行配置 + 执行状态 + 运行结果
 ```
 
 Task 是第一版调度单元。Master 不拆分 Python 脚本内部逻辑，而是将整个 Task 分配给一个 Worker 执行。
 
-Bot、BotVersion、Task 和 TaskItem 的关系：
+Job Definition、Job Definition Version、Task 和 TaskItem 的关系：
 
 | 对象 | 关系字段 | 作用 |
 |---|---|---|
-| `Bot` | `id`、`current_version_id` | 自动化能力的逻辑定义；可以产生多个 Task |
-| `BotVersion` | `id`、`bot_id`、`status` | Task 实际使用的脚本、入口文件和配置版本 |
-| `Task` | `bot_id`、`bot_version_id`、`bot_snapshot` | 一次完整执行；创建时冻结实际使用的 BotVersion |
+| `Job Definition` | `id`、`current_version_id` | 自动化能力的逻辑定义；可以产生多个 Task |
+| `Job Definition Version` | `id`、`bot_id`、`status` | Task 实际使用的脚本、入口文件和配置版本 |
+| `Task` | `bot_id`、`bot_version_id`、`bot_snapshot` | 一次完整执行；创建时冻结实际使用的 Job Definition Version |
 | `TaskItem` | `task_id` | Task 执行过程中产生的明细和统计单元 |
 
 Task 创建时的版本解析：
@@ -37,20 +37,19 @@ Task 创建时的版本解析：
 ```text
 指定 bot_version_id
   -> 校验该版本属于 bot_id
-  -> 校验 BotVersion.status=published
+  -> 校验 Job Definition Version.status=published
   -> 使用指定版本
 
 未指定 bot_version_id
-  -> 读取 Bot.current_version_id
+  -> 读取 Job Definition.current_version_id
   -> 使用当前 published 版本
 
 创建成功
-  -> 写入 Task.bot_id
-  -> 写入 Task.bot_version_id
-  -> 复制 BotVersion 相关字段到 Task.bot_snapshot
+  -> 写入 Task.bot_id、Task.bot_code、Task.bot_version_id
+  -> 在 Task.bot_snapshot 中保留 bot_id、bot_code、bot_version_id、version 及 Job Definition Version 相关字段
 ```
 
-Task 创建后，Bot 发布新版本、修改默认配置或切换 `current_version_id`，都不会改写已经创建的 Task。重试和重新执行也会创建新的 Task，并通过 `source_task_id` 记录来源。
+Task 创建后，Job Definition 发布新版本、修改默认配置或切换 `current_version_id`，都不会改写已经创建的 Task。重试和重新执行也会创建新的 Task，并通过 `source_task_id` 记录来源。
 
 ---
 
@@ -537,7 +536,7 @@ skipped 计入 completed_items，但不计入失败
 > [重复摘要｜非规范性]
 > 本节保留 Task 含义作为 API 上下文，不重新定义领域模型或状态机。Task 核心含义见 [Task 模型](Task执行规范.md#task-model)，`Task.status` 与终态裁定见 [Task 状态机](Task执行规范.md#task-status)，统计公式见 [统计规则](Task执行规范.md#task-statistics)；本节负责 Task 的 REST 读写契约。
 
-Task API 面向前端、管理后台和外部调用方。Task 是基于一个已解析 `BotVersion` 创建的一次 Python 脚本执行，也是第一版调度单元；创建请求可省略 `bot_version_id`，但成功创建的 Task 必须记录最终解析出的 `bot_version_id`。
+Task API 面向前端、管理后台和外部调用方。Task 是基于一个已解析 `Job Definition Version` 创建的一次 Python 脚本执行，也是第一版调度单元；创建请求可省略 `bot_version_id`，但成功创建的 Task 必须记录最终解析出的 `bot_version_id`。
 
 ### 接口索引
 
@@ -616,7 +615,7 @@ GET /api/tasks                  -> TaskListItem，列表摘要
 GET /api/tasks/{task_id}        -> TaskDetail，完整详情
 ```
 
-两者共享相同的字段命名和基础语义，但列表接口只返回适合分页展示的字段，详情接口返回完整 Task 基础字段、完整 `statistics`、Bot 快照、输入摘要、运行配置、错误详情和操作能力。这样既保持 API 模型一致，又避免列表接口返回过大的 JSON。
+两者共享相同的字段命名和基础语义，但列表接口只返回适合分页展示的字段，详情接口返回完整 Task 基础字段、完整 `statistics`、Job Definition 快照、输入摘要、运行配置、错误详情和操作能力。这样既保持 API 模型一致，又避免列表接口返回过大的 JSON。
 
 下面的字段表定义完整的 Task 资源模型。具体接口返回哪些字段，分别见 [查询 Task 列表](#list-tasks) 和 [查询 Task 详情](#get-task)；创建、取消、重试接口只返回其中的部分字段。
 
@@ -655,10 +654,10 @@ GET /api/tasks/{task_id}        -> TaskDetail，完整详情
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---:|---|
 | `id` | string | 是 | Task ID，对外唯一 |
-| `bot_id` | string | 是 | 所属 Bot ID |
-| `bot_code` | string | 是 | Bot 稳定编码，冗余保存用于列表展示和历史追溯 |
-| `bot_version_id` | string | 是 | 本次执行实际使用的 BotVersion ID；请求未提供时，在创建事务中解析 `Bot.current_version_id` 后写入 |
-| `bot_snapshot` | object | 是 | Task 创建时复制的 Bot / BotVersion 关键字段，保证历史 Task 不受 Bot 后续修改影响 |
+| `bot_id` | string | 是 | 所属 Job Definition ID |
+| `bot_code` | string | 是 | Job Definition 稳定编码，冗余保存用于列表展示和历史追溯 |
+| `bot_version_id` | string | 是 | 本次执行实际使用的 Job Definition Version ID；请求未提供时，在创建事务中解析 `Job Definition.current_version_id` 后写入 |
+| `bot_snapshot` | object | 是 | Task 创建时复制的 Job Definition / Job Definition Version 关键字段；保留 `bot_id`、`bot_code`、`bot_version_id`、`version` 等执行溯源信息，保证历史 Task 不受 Job Definition 后续修改影响 |
 | `source_task_id` | string | 否 | 来源 Task ID；重试、重新执行时填写 |
 | `schedule_id` | string | 否 | 来源 Schedule ID；手动/API 创建为空 |
 | `schedule_run_id` | string | 否 | 来源 ScheduleRun ID |
@@ -674,9 +673,9 @@ GET /api/tasks/{task_id}        -> TaskDetail，完整详情
 | `input_source` | string | 是 | 输入来源，见 [input_source](#task-input-source) |
 | `input_params` | object | 否 | 小体积 JSON 输入参数 |
 | `input_file_id` | string | 否 | 输入文件 ID，例如 Excel 文件；`input_source=file` 时使用 |
-| `config` | object | 否 | 本次 Task 覆盖 Bot 默认配置的运行配置 |
+| `config` | object | 否 | 本次 Task 覆盖 Job Definition 默认配置的运行配置 |
 | `requirements` | object | 否 | 本次运行要求，例如 runtime、image、capabilities、labels；缺省语义见 [Worker 协议](Worker协议与运行时.md#worker-protocol) |
-| `timeout_seconds` | integer | 否 | Task 整体超时时间，未设置时使用 Bot 默认值或系统默认值 |
+| `timeout_seconds` | integer | 否 | Task 整体超时时间，未设置时使用 Job Definition 默认值或系统默认值 |
 | `cancel_requested_at` | string | 否 | 用户请求取消时间 |
 | `cancel_reason` | string | 否 | 取消原因 |
 | `cancel_grace_period_seconds` | integer | 是 | 取消宽限期，默认 `30` |
@@ -708,7 +707,7 @@ GET /api/tasks/{task_id}        -> TaskDetail，完整详情
 
 以下字段属于 `Task.statistics`，不是 Task 顶层字段。它们由该 Task 下的全部 TaskItem 聚合得到，用于列表展示、详情展示和 Task 最终状态判定。
 
-第一版只提供 Task 级总体统计，不在 `Task.statistics` 中按 Bot、TaskItem type、时间段或业务 key 再拆分统计。需要查看单条业务记录的状态和错误时，调用：
+第一版只提供 Task 级总体统计，不在 `Task.statistics` 中按 Job Definition、TaskItem type、时间段或业务 key 再拆分统计。需要查看单条业务记录的状态和错误时，调用：
 
 ```http
 GET /api/tasks/{task_id}/items
@@ -755,7 +754,7 @@ TaskItem
 
 | 值 | 含义 | 创建来源 |
 |---|---|---|
-| `manual` | 人工在后台点击运行 | Bot 详情页 / Task 创建页 |
+| `manual` | 人工在后台点击运行 | Job Definition 详情页 / Task 创建页 |
 | `schedule` | Schedule 到点触发 | Schedule Runner |
 | `retry_all` | 对原 Task 全量重试 | Retry API |
 | `retry_failed_items` | 只重试失败/超时 TaskItem | Retry API |
@@ -794,8 +793,8 @@ POST /api/tasks
 
 | 字段 | 类型 | 必填 | 默认值 | 说明 |
 |---|---|---:|---|---|
-| `bot_id` | string | 是 | - | 要运行的 Bot |
-| `bot_version_id` | string | 否 | 当前版本 | 指定版本；不传则使用 Bot 当前启用版本 |
+| `bot_id` | string | 是 | - | 要运行的 Job Definition |
+| `bot_version_id` | string | 否 | 当前版本 | 指定版本；不传则使用 Job Definition 当前启用版本 |
 | `run_type` | string | 否 | `manual` 或 `api` | 后台手动创建为 `manual`，外部 token 创建为 `api` |
 | `input_source` | string | 是 | - | 输入来源 |
 | `input_file_id` | string | 否 | `null` | 已通过 `POST /api/files` 上传的输入文件 ID，见 [Source File API](./源文件.md#source-file-api) |
@@ -803,7 +802,7 @@ POST /api/tasks
 | `config` | object | 否 | `{}` | 本次运行配置覆盖项 |
 | `requirements` | object | 否 | `{}` | 本次运行要求覆盖项 |
 | `priority` | integer | 否 | `50` | 调度优先级，合法范围 `0..100`；普通主体仅可设置 `0..50`，`51..100` 需高优先级权限 |
-| `timeout_seconds` | integer | 否 | Bot 默认值 | 整体超时 |
+| `timeout_seconds` | integer | 否 | Job Definition 默认值 | 整体超时 |
 | `idempotency_key` | string | 否 | `null` | 外部系统防重复创建；同一创建主体下唯一；各入口作用域与存储由 [`ALIGN-013`](待对齐问题.md#align-013) 跟踪 |
 
 请求示例：
@@ -916,7 +915,7 @@ Query 字段：
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| `bot_id` | string | 按 Bot 过滤 |
+| `bot_id` | string | 按 Job Definition 过滤 |
 | `status` | string | 按单个状态过滤 |
 | `statuses` | string | 多状态过滤，逗号分隔，例如 `pending,running` |
 | `run_type` | string | 按运行类型过滤 |
@@ -924,7 +923,7 @@ Query 字段：
 | `schedule_id` | string | 按 Schedule 过滤 |
 | `source_task_id` | string | 查询某个 Task 派生出的重试/重跑 Task |
 | `created_by` | string | 按创建人过滤 |
-| `q` | string | 搜索 task id、bot code、summary |
+| `q` | string | 搜索 task ID、作业定义编码、summary |
 
 列表项必须返回足够支撑列表页的信息。这里的统计字段位于 `statistics` 子对象中：
 
@@ -1007,7 +1006,7 @@ GET /api/tasks/{task_id}
 | 字段组 | 说明 |
 |---|---|
 | 基础信息 | Task 对象的基础字段 |
-| Bot 快照 | `bot_snapshot`，展示当时执行的 Bot 名称、版本、入口文件 |
+| Job Definition 快照 | `bot_snapshot`，展示当时执行的 Job Definition 稳定编码、版本、入口文件 |
 | 输入摘要 | `input_source`、`input_file_id`、`input_params` 摘要，敏感字段脱敏 |
 | 运行配置 | `config`、`requirements` |
 | 调度信息 | `worker_id`、`assignment_id`、`priority`、`queue_entered_at`、`next_dispatch_at`、`dispatch_attempts`、dispatch 时间、Ack/Start deadline、start/finish 时间 |
@@ -1195,7 +1194,7 @@ rerun  面向任意终态的再次执行，包括成功任务
 | `config` | object | 否 | 原 Task config | 可覆盖新 Task 的运行配置 |
 | `requirements` | object | 否 | 原 Task requirements | 可覆盖新 Task 的运行要求 |
 | `priority` | integer | 否 | 原 Task priority | 新 Task 优先级；合法范围与权限规则同创建 Task |
-| `bot_version_id` | string | 否 | 原 Task bot_version_id | 可指定使用 Bot 当前版本或其他历史版本 |
+| `bot_version_id` | string | 否 | 原 Task bot_version_id | 可指定使用 Job Definition 当前版本或其他历史版本 |
 | `idempotency_key` | string | 否 | `null` | 防重复创建 |
 
 输入构造：
@@ -1214,7 +1213,7 @@ rerun  面向任意终态的再次执行，包括成功任务
 若原 Task 的 `input_source=task_items`（来自某次 failed_items 重试），`rerun` 仍复用该次 Task 的输入快照，而不是回溯到更早的祖先 Task。需要全量业务输入时，应对最初的源 Task 执行 `rerun`，或对失败源 Task 使用 `retry` 且 `mode=all`。
 
 > [待对齐｜不在本次范围]
-> BotVersion 选择、失败项稳定输入快照以及继承的 Source File 已删除或不可下载时的处理，由 [`ALIGN-010`](待对齐问题.md#align-010) 跟踪；本节不从现有表结构推导新行为。
+> Job Definition Version 选择、失败项稳定输入快照以及继承的 Source File 已删除或不可下载时的处理，由 [`ALIGN-010`](待对齐问题.md#align-010) 跟踪；本节不从现有表结构推导新行为。
 
 可重新执行状态：
 
@@ -1238,7 +1237,7 @@ canceling
 操作能力字段：
 
 ```text
-can_rerun = 原 Task 处于上述可重新执行终态，且当前用户有运行该 Bot 的权限
+can_rerun = 原 Task 处于上述可重新执行终态，且当前用户有运行该 Job Definition 的权限
 ```
 
 `can_retry` 与 `can_rerun` 可以同时为 true，例如 `partial_success`：
@@ -1278,7 +1277,7 @@ can_rerun = true   # 也可作为一次新的全量重新执行
 POST /api/tasks/{task_id}/resume-dispatch
 ```
 
-该接口用于恢复**同一个**仍处于 `pending` 的 Task 的自动派发，不创建新 Task，也不改变 Bot 快照、输入、TaskItem 或终态语义。它面向达到最大派发次数、长期无候选后被暂停自动调度的运维场景，与 [Task API](Task执行规范.md#task-api) 的终态 retry 不同。
+该接口用于恢复**同一个**仍处于 `pending` 的 Task 的自动派发，不创建新 Task，也不改变 Job Definition 快照、输入、TaskItem 或终态语义。它面向达到最大派发次数、长期无候选后被暂停自动调度的运维场景，与 [Task API](Task执行规范.md#task-api) 的终态 retry 不同。
 
 请求字段：
 
@@ -1373,7 +1372,7 @@ POST  /api/task-items/{item_id}/retry
 |---|---|---:|---|
 | `id` | string | 是 | TaskItem ID |
 | `task_id` | string | 是 | 所属 Task ID |
-| `bot_id` | string | 是 | 冗余 Bot ID，便于查询 |
+| `bot_id` | string | 是 | 冗余 Job Definition ID，便于查询 |
 | `type` | string | 是 | 明细类型，推荐值见 [TaskItem type 推荐值](#task-item-types) |
 | `key` | string | 否 | 业务唯一键，例如 Excel 行号、URL、外部单号 |
 | `index` | integer | 否 | 顺序号，从 0 开始，前端展示为 `index + 1` |
