@@ -4,6 +4,7 @@ import { useI18n } from '../i18n';
 import { useDB } from '../hooks';
 import { Panel } from '../components/ui';
 import { BackLink, DetailHero, Progress, ScheduleNextRun, StatusBadge, timeShort } from '../components/console';
+import { PlacementSelect, tokenToPlacement } from '../components/PlacementSelect';
 import {
   createJobDefinitionVersion,
   createTask,
@@ -37,7 +38,7 @@ export default function JobDefinitionDetail() {
   const [publish, setPublish] = useState(true);
   const [err, setErr] = useState('');
   const [flash, setFlash] = useState('');
-  const [runWorkerId, setRunWorkerId] = useState('');
+  const [placementToken, setPlacementToken] = useState('');
 
   const jobDefinition = db.bots.find((candidate) => candidate.id === jobDefinitionId);
 
@@ -113,7 +114,7 @@ export default function JobDefinitionDetail() {
       showFlash(t('jobDefinitions.err.runRejected'));
       return;
     }
-    if (!runWorkerId) {
+    if (!placementToken) {
       showFlash(t('tasks.err.worker'));
       return;
     }
@@ -133,8 +134,15 @@ export default function JobDefinitionDetail() {
       showFlash(t('jobDefinitions.err.runRejected'));
       return;
     }
-    const target = runWorkerId === 'auto' ? null : runWorkerId;
-    const taskRun = runTask(template.id, { target_worker_id: target });
+    const placement = tokenToPlacement(placementToken);
+    if (!placement) {
+      showFlash(t('tasks.err.worker'));
+      return;
+    }
+    const taskRun = runTask(template.id, {
+      target_pool_id: placement.target_pool_id,
+      target_worker_id: placement.target_worker_id,
+    });
     if (taskRun) navigate(`/task-runs/${taskRun.id}`);
     else showFlash(t('jobDefinitions.err.runRejected'));
   };
@@ -158,29 +166,22 @@ export default function JobDefinitionDetail() {
           {flash && <span className="chip red">{flash}</span>}
         </div>
         <div className="left run-target-ctl">
-          <label className="run-target-label" htmlFor="job-run-worker">
+          <label className="run-target-label" htmlFor="job-run-placement">
             {t('tasks.f.worker')}
           </label>
-          <select
-            id="job-run-worker"
-            value={runWorkerId}
+          <PlacementSelect
+            id="job-run-placement"
+            value={placementToken}
             disabled={!runnable}
-            onChange={(event) => setRunWorkerId(event.target.value)}
+            requireChoice
             aria-label={t('tasks.f.worker')}
-          >
-            <option value="">{t('tasks.f.worker.pick')}</option>
-            <option value="auto">{t('tasks.f.worker.auto')}</option>
-            {db.workers.map((worker) => (
-              <option key={worker.id} value={worker.id}>
-                {worker.name} // {worker.status} // {worker.capacity_used}/{worker.capacity_max}
-              </option>
-            ))}
-          </select>
+            onChange={setPlacementToken}
+          />
           <button
             className="btn sm"
             type="button"
             onClick={run}
-            disabled={!runnable || !runWorkerId}
+            disabled={!runnable || !placementToken}
             title={versionResolution.ok && versionResolution.version.default_input_source === 'file'
               ? t('jobDefinitions.run.fileRequired')
               : undefined}

@@ -124,7 +124,44 @@ describe('Job Definition Version and Task template contracts', () => {
     const byNull = runTask(task.id, { target_worker_id: null })!;
     const byToken = runTask(task.id, { target_worker_id: 'auto' })!;
     expect(byNull.target_worker_id).toBeNull();
+    expect(byNull.target_pool_id).toBeNull();
     expect(byToken.target_worker_id).toBeNull();
+    expect(byToken.target_pool_id).toBeNull();
+  });
+
+  it('accepts a worker pool placement on manual runTask', async () => {
+    const { createTask, runTask } = await loadStore();
+    const task = createTask({
+      bot_id: 'bot_invoice_sync',
+      name: 'Pool placement pin',
+      input_source: 'params',
+      input_params: {},
+    })!;
+    const taskRun = runTask(task.id, { target_pool_id: 'wpool_edge' })!;
+    expect(taskRun).toMatchObject({
+      task_id: task.id,
+      run_type: 'manual',
+      target_pool_id: 'wpool_edge',
+      target_worker_id: null,
+      worker_id: null,
+    });
+    expect(runTask(task.id, { target_pool_id: 'wpool_missing' })).toBeNull();
+  });
+
+  it('lets worker pin win over pool on resolvePlacement', async () => {
+    const { createTask, runTask } = await loadStore();
+    const task = createTask({
+      bot_id: 'bot_invoice_sync',
+      name: 'Pin wins',
+      input_source: 'params',
+      input_params: {},
+    })!;
+    const taskRun = runTask(task.id, {
+      target_pool_id: 'wpool_edge',
+      target_worker_id: 'worker_edge_02',
+    })!;
+    expect(taskRun.target_worker_id).toBe('worker_edge_02');
+    expect(taskRun.target_pool_id).toBeNull();
   });
 
   it('inherits executable defaults when a new version omits replacements', async () => {
@@ -318,11 +355,99 @@ describe('Schedule decision contracts', () => {
       enabled: true,
     });
     expect(schedule?.target_worker_id).toBeNull();
+    expect(schedule?.target_pool_id).toBeNull();
 
     const run = triggerSchedule(schedule!.id)!;
     const taskRun = db.taskRuns.find((item) => item.id === run.task_run_id)!;
     expect(run.status).toBe('task_created');
     expect(taskRun.target_worker_id).toBeNull();
+    expect(taskRun.target_pool_id).toBeNull();
+  });
+
+  it('freezes pool placement onto scheduled TaskRuns', async () => {
+    const { createTask, createSchedule, db, triggerSchedule, toggleJobDefinition } = await loadStore();
+    const definition = db.bots.find((item) => item.id === 'bot_invoice_sync')!;
+    if (definition.status !== 'enabled') expect(toggleJobDefinition(definition.id).ok).toBe(true);
+
+    const task = createTask({
+      bot_id: definition.id,
+      name: 'Pool schedule task',
+      input_source: 'params',
+      input_params: {},
+    })!;
+    const schedule = await createSchedule({
+      task_id: task.id,
+      name: 'Pool schedule',
+      cron: '25 * * * *',
+      timezone: 'UTC',
+      target_pool_id: 'wpool_edge',
+      enabled: true,
+    });
+    expect(schedule?.target_pool_id).toBe('wpool_edge');
+    expect(schedule?.target_worker_id).toBeNull();
+
+    const run = triggerSchedule(schedule!.id)!;
+    const taskRun = db.taskRuns.find((item) => item.id === run.task_run_id)!;
+    expect(run.status).toBe('task_created');
+    expect(taskRun.target_pool_id).toBe('wpool_edge');
+    expect(taskRun.target_worker_id).toBeNull();
+  });
+
+  it('skips schedule fire when the target pool is missing, disabled, or empty', async () => {
+    const {
+      createTask,
+      createSchedule,
+      createWorkerPool,
+      db,
+      setWorkerPoolMembers,
+      toggleJobDefinition,
+      toggleWorkerPool,
+      triggerSchedule,
+    } = await loadStore();
+    const definition = db.bots.find((item) => item.id === 'bot_invoice_sync')!;
+    if (definition.status !== 'enabled') expect(toggleJobDefinition(definition.id).ok).toBe(true);
+
+    const task = createTask({
+      bot_id: definition.id,
+      name: 'Pool skip task',
+      input_source: 'params',
+      input_params: {},
+    })!;
+
+    const missing = await createSchedule({
+      task_id: task.id,
+      name: 'Missing pool',
+      cron: '30 * * * *',
+      timezone: 'UTC',
+      target_pool_id: 'wpool_edge',
+      enabled: true,
+    })!;
+    // Simulate a deleted pool after schedule create by rewriting the durable pin.
+    missing!.target_pool_id = 'wpool_gone';
+    const missingRun = triggerSchedule(missing!.id)!;
+    expect(missingRun).toMatchObject({ status: 'skipped', reason: 'target_pool_missing', task_run_id: null });
+
+    const pool = createWorkerPool({
+      name: 'Skip probe',
+      worker_ids: ['worker_edge_01'],
+      enabled: true,
+    })!;
+    const disabled = await createSchedule({
+      task_id: task.id,
+      name: 'Disabled pool',
+      cron: '31 * * * *',
+      timezone: 'UTC',
+      target_pool_id: pool.id,
+      enabled: true,
+    })!;
+    expect(toggleWorkerPool(pool.id)).toBe(true);
+    const disabledRun = triggerSchedule(disabled!.id)!;
+    expect(disabledRun).toMatchObject({ status: 'skipped', reason: 'target_pool_disabled', task_run_id: null });
+
+    expect(toggleWorkerPool(pool.id)).toBe(true);
+    expect(setWorkerPoolMembers(pool.id, [])).toBe(true);
+    const emptyRun = triggerSchedule(disabled!.id)!;
+    expect(emptyRun).toMatchObject({ status: 'skipped', reason: 'target_pool_empty', task_run_id: null });
   });
 
   it('links a TaskRun only for task_created decisions', async () => {
@@ -476,8 +601,105 @@ describe('Retry and rerun contracts', () => {
   });
 });
 
+describe('Worker tag contracts', () => {
+  it('edits user tags without mutating system tags', async () => {
+    const { db, setWorkerUserTags } = await loadStore();
+    const worker = db.workers.find((item) => item.id === 'worker_edge_01')!;
+    const systemBefore = [...worker.system_tags];
+
+    expect(setWorkerUserTags(worker.id, ['finance-edge', ' night-shift ', 'gpu', 'finance-edge'])).toBe(true);
+    // system tag "gpu" is rejected; duplicates collapsed; whitespace trimmed.
+    expect(worker.user_tags).toEqual(['finance-edge', 'night-shift']);
+    expect(worker.system_tags).toEqual(systemBefore);
+    expect(setWorkerUserTags('worker_missing', ['x'])).toBe(false);
+  });
+
+  it('seeds system-reported runtimes separate from agent version and tags', async () => {
+    const { db } = await loadStore();
+    const edge = db.workers.find((item) => item.id === 'worker_edge_01')!;
+    expect(edge.runtimes).toEqual(['python3.12']);
+    expect(edge.version).toMatch(/^workerd\//);
+    expect(edge.system_tags).not.toContain('python3.12');
+    expect(edge.user_tags).not.toContain('python3.12');
+  });
+
+  it('promotes legacy tags into system_tags and defaults runtimes on migrate', async () => {
+    const first = await loadStore();
+    const persisted = JSON.parse(JSON.stringify(first.db));
+    persisted.schema_version = 7;
+    persisted.workers.forEach((worker: Record<string, unknown>) => {
+      worker.tags = ['legacy-a', 'legacy-b'];
+      delete worker.system_tags;
+      delete worker.user_tags;
+      delete worker.runtimes;
+    });
+    // Drop the live module first and wait out its debounced persist so a
+    // late seed write cannot overwrite the crafted legacy payload.
+    vi.resetModules();
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    storage.setItem('botops-db-v2', JSON.stringify(persisted));
+
+    const migrated = await loadStore();
+    expect(migrated.db.schema_version).toBe(9);
+    const edge = migrated.db.workers.find((item) => item.id === 'worker_edge_01')!;
+    expect(edge.system_tags).toEqual(['legacy-a', 'legacy-b']);
+    expect(edge.user_tags).toEqual([]);
+    expect(edge.runtimes).toEqual(['python3.12']);
+    expect('tags' in edge).toBe(false);
+  });
+});
+
+describe('Worker pool contracts', () => {
+  it('creates pools and updates membership', async () => {
+    const { createWorkerPool, db, setWorkerPoolMembers, toggleWorkerPool } = await loadStore();
+    const pool = createWorkerPool({
+      name: 'Batch west',
+      tags: ['batch', 'west'],
+      worker_ids: ['worker_batch_01', 'worker_missing'],
+      enabled: true,
+    })!;
+    expect(pool).toMatchObject({
+      name: 'Batch west',
+      status: 'enabled',
+      tags: ['batch', 'west'],
+      worker_ids: ['worker_batch_01'],
+    });
+    expect(db.workerPools.some((item) => item.id === pool.id)).toBe(true);
+
+    expect(setWorkerPoolMembers(pool.id, ['worker_edge_01', 'worker_batch_01'])).toBe(true);
+    expect(pool.worker_ids).toEqual(['worker_edge_01', 'worker_batch_01']);
+    expect(toggleWorkerPool(pool.id)).toBe(true);
+    expect(pool.status).toBe('disabled');
+    expect(createWorkerPool({ name: '   ' })).toBeNull();
+  });
+
+  it('dispatches pool-targeted TaskRuns only to pool members', async () => {
+    const { createTask, db, runTask, tickTask } = await loadStore();
+    const task = createTask({
+      bot_id: 'bot_invoice_sync',
+      name: 'Pool dispatch',
+      input_source: 'params',
+      input_params: {},
+    })!;
+    const taskRun = runTask(task.id, { target_pool_id: 'wpool_batch' })!;
+    expect(taskRun.status).toBe('pending');
+    expect(taskRun.target_pool_id).toBe('wpool_batch');
+
+    // Force only batch member online so the pick is deterministic.
+    db.workers.forEach((worker) => {
+      worker.status = worker.id === 'worker_batch_01' ? 'online' : 'offline';
+      worker.enabled = true;
+      worker.capacity_used = 0;
+      worker.current_task_run_ids = [];
+    });
+    tickTask(taskRun.id);
+    expect(taskRun.status).toBe('dispatching');
+    expect(taskRun.worker_id).toBe('worker_batch_01');
+  });
+});
+
 describe('Schema load and reconcile', () => {
-  it('reseeds pre-v6 localStorage and lands on schema 6', async () => {
+  it('reseeds pre-v6 localStorage and lands on schema 9', async () => {
     const timestamp = '2025-01-01T00:00:00.000Z';
     storage.setItem('botops-db-v2', JSON.stringify({
       schema_version: 5,
@@ -499,13 +721,51 @@ describe('Schema load and reconcile', () => {
     }));
 
     const loaded = await loadStore();
-    expect(loaded.db.schema_version).toBe(6);
+    expect(loaded.db.schema_version).toBe(9);
     expect(loaded.db.tasks.some((task) => task.id === 'task_nightly_inv')).toBe(true);
     expect(loaded.db.taskRuns.some((run) => run.id === 'trun_9f2c01')).toBe(true);
     expect(loaded.db.schedules.every((schedule) => typeof schedule.task_id === 'string')).toBe(true);
+    expect(Array.isArray(loaded.db.workerPools)).toBe(true);
+    expect(loaded.db.workerPools.length).toBeGreaterThan(0);
+    expect(loaded.db.workers.every((worker) => (
+      Array.isArray(worker.system_tags)
+      && Array.isArray(worker.user_tags)
+      && Array.isArray(worker.runtimes)
+    ))).toBe(true);
   });
 
-  it('reconciles broken ScheduleRun ↔ TaskRun links in valid v6 storage', async () => {
+  it('migrates valid v6 storage to schema 9 with pools, placement, tags, and runtimes', async () => {
+    const first = await loadStore();
+    const persisted = JSON.parse(JSON.stringify(first.db));
+    persisted.schema_version = 6;
+    delete persisted.workerPools;
+    persisted.schedules.forEach((schedule: Record<string, unknown>) => {
+      delete schedule.target_pool_id;
+    });
+    persisted.taskRuns.forEach((taskRun: Record<string, unknown>) => {
+      delete taskRun.target_pool_id;
+    });
+    persisted.workers.forEach((worker: Record<string, unknown>) => {
+      delete worker.runtimes;
+    });
+    vi.resetModules();
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    storage.setItem('botops-db-v2', JSON.stringify(persisted));
+
+    const migrated = await loadStore();
+    expect(migrated.db.schema_version).toBe(9);
+    expect(Array.isArray(migrated.db.workerPools)).toBe(true);
+    expect(migrated.db.schedules.every((schedule) => schedule.target_pool_id === null || typeof schedule.target_pool_id === 'string')).toBe(true);
+    expect(migrated.db.taskRuns.every((run) => run.target_pool_id === null || typeof run.target_pool_id === 'string')).toBe(true);
+    expect(migrated.db.workers.every((worker) => (
+      Array.isArray(worker.system_tags)
+      && Array.isArray(worker.user_tags)
+      && Array.isArray(worker.runtimes)
+      && worker.runtimes.length > 0
+    ))).toBe(true);
+  });
+
+  it('reconciles broken ScheduleRun ↔ TaskRun links in valid v9 storage', async () => {
     const first = await loadStore();
     const persisted = JSON.parse(JSON.stringify(first.db));
     const run = persisted.runs.find((candidate: { task_run_id: string | null }) => candidate.task_run_id);

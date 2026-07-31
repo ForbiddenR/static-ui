@@ -6,6 +6,7 @@ import {
   type Bot, type BotSnapshot, type BotVersion, type InputSource, type JsonObject,
   type Schedule, type ScheduleRun, type ScheduleRunTriggerType,
   type Task, type TaskRun, type TaskRunType, type TaskItemStatus,
+  type WorkerPool,
 } from './db';
 import { tickTaskRun, tickWorkers, releaseWorker } from './engine';
 import { calculateNextScheduleTimes, scheduleJitterSeconds, validateCron, validateTimezone } from './scheduleTime';
@@ -241,6 +242,15 @@ export function toggleTask(taskId: string): void {
 
 // ---- TaskRun materialization ----
 
+export type PlacementMode = 'auto' | 'pool' | 'worker';
+
+/** Resolved placement for Schedule / TaskRun (worker pin wins over pool). */
+export interface Placement {
+  mode: PlacementMode;
+  target_pool_id: string | null;
+  target_worker_id: string | null;
+}
+
 interface MaterializeInput {
   task: Task;
   resolution: Extract<PublishedVersionResolution, { ok: true }>;
@@ -248,6 +258,7 @@ interface MaterializeInput {
   source_task_run_id?: string | null;
   schedule_id?: string | null;
   schedule_run_id?: string | null;
+  target_pool_id?: string | null;
   target_worker_id?: string | null;
   input_source: InputSource;
   input_file_id?: string | null;
@@ -305,6 +316,7 @@ function materializeTaskRun(input: MaterializeInput): TaskRun | null {
       total: count, success: 0, failed: 0, skipped: 0, timeout: 0, canceled: 0, pending: count, running: 0, completed: 0,
     },
     items,
+    target_pool_id: input.target_pool_id ?? null,
     target_worker_id: input.target_worker_id ?? null,
     worker_id: null,
     error_code: null,
@@ -327,8 +339,15 @@ export interface RunTaskInput {
   requirements?: JsonObject;
   priority?: number;
   run_type?: 'manual' | 'api';
-  /** Worker appointed for this manual/api run. Required by the Task detail UI. */
+  /** Placement for this manual/api run: auto | pool | worker. */
+  target_pool_id?: string | null;
   target_worker_id?: string | null;
+}
+
+function placementNote(placement: Placement): string {
+  if (placement.mode === 'worker') return `target worker ${placement.target_worker_id}`;
+  if (placement.mode === 'pool') return `target pool ${placement.target_pool_id}`;
+  return 'auto dispatch';
 }
 
 export function runTask(taskId: string, overrides?: RunTaskInput): TaskRun | null {
@@ -336,16 +355,17 @@ export function runTask(taskId: string, overrides?: RunTaskInput): TaskRun | nul
   if (!task || task.status !== 'enabled') return null;
   const resolved = resolvePublishedBotVersion(task.bot_id, task.bot_version_id);
   if (!resolved.ok || resolved.bot.status !== 'enabled') return null;
-  const rawTarget = overrides?.target_worker_id;
-  const targetWorkerId = rawTarget == null || rawTarget === '' || rawTarget === 'auto' || rawTarget === 'random'
-    ? null
-    : rawTarget;
-  if (targetWorkerId && !db.workers.some((worker) => worker.id === targetWorkerId)) return null;
+  const placement = resolvePlacement({
+    target_pool_id: overrides?.target_pool_id,
+    target_worker_id: overrides?.target_worker_id,
+  });
+  if (!placement) return null;
   const taskRun = materializeTaskRun({
     task,
     resolution: resolved,
     run_type: overrides?.run_type ?? 'manual',
-    target_worker_id: targetWorkerId,
+    target_pool_id: placement.target_pool_id,
+    target_worker_id: placement.target_worker_id,
     input_source: task.input_source,
     input_file_id: task.input_file_id,
     input_params: overrides?.input_params ?? task.input_params,
@@ -356,9 +376,7 @@ export function runTask(taskId: string, overrides?: RunTaskInput): TaskRun | nul
   return taskRun
     ? commitTaskRun(
       taskRun,
-      targetWorkerId
-        ? `task run created from template ${task.name}; target worker ${targetWorkerId}; frozen Job Definition Version ${resolved.version.version}`
-        : `task run created from template ${task.name} with frozen Job Definition Version ${resolved.version.version}`,
+      `task run created from template ${task.name}; ${placementNote(placement)}; frozen Job Definition Version ${resolved.version.version}`,
     )
     : null;
 }
@@ -412,11 +430,14 @@ export function retryTaskRun(taskRunId: string, mode: 'all' | 'failed_items' = '
   if (!resolution) return null;
   const failed = src.items.filter((item) => item.status === 'failed' || item.status === 'timeout');
   if (mode === 'failed_items' && failed.length === 0) return null;
+  const placement = placementOf(src);
   const taskRun = materializeTaskRun({
     task,
     resolution,
     run_type: mode === 'all' ? 'retry_all' : 'retry_failed_items',
     source_task_run_id: src.id,
+    target_pool_id: placement.target_pool_id,
+    target_worker_id: placement.target_worker_id,
     input_source: mode === 'all' ? src.input_source : 'task_items',
     input_file_id: src.input_file_id,
     input_params: mode === 'all'
@@ -438,11 +459,14 @@ export function rerunTaskRun(taskRunId: string): TaskRun | null {
   if (!task) return null;
   const resolution = frozenResolution(src);
   if (!resolution) return null;
+  const placement = placementOf(src);
   const taskRun = materializeTaskRun({
     task,
     resolution,
     run_type: 'rerun',
     source_task_run_id: src.id,
+    target_pool_id: placement.target_pool_id,
+    target_worker_id: placement.target_worker_id,
     input_source: src.input_source,
     input_file_id: src.input_file_id,
     input_params: src.input_params,
@@ -469,8 +493,9 @@ export interface CreateScheduleInput {
   cron: string;
   timezone?: string;
   /**
-   * Worker pin for every fire. Pass a worker id, or null / 'auto' for auto dispatch.
+   * Placement for every fire: worker pin, pool scope, or auto (both null / 'auto').
    */
+  target_pool_id?: string | null;
   target_worker_id?: string | null;
   overlap_policy?: Schedule['overlap_policy'];
   missed_run_policy?: Schedule['missed_run_policy'];
@@ -478,9 +503,49 @@ export interface CreateScheduleInput {
   enabled?: boolean;
 }
 
-function resolveTargetWorkerPin(value: string | null | undefined): string | null | false {
-  if (value == null || value === '' || value === 'auto' || value === 'random') return null;
-  return db.workers.some((item) => item.id === value) ? value : false;
+/**
+ * Resolve placement tokens.
+ * - worker id wins over pool
+ * - null / '' / 'auto' / 'random' → no pin
+ * - returns null when an unknown id is supplied
+ */
+export function resolvePlacement(input: {
+  target_pool_id?: string | null;
+  target_worker_id?: string | null;
+}): Placement | null {
+  const rawWorker = input.target_worker_id;
+  const rawPool = input.target_pool_id;
+
+  let target_worker_id: string | null = null;
+  if (rawWorker != null && rawWorker !== '' && rawWorker !== 'auto' && rawWorker !== 'random') {
+    if (!db.workers.some((item) => item.id === rawWorker)) return null;
+    target_worker_id = rawWorker;
+  }
+
+  let target_pool_id: string | null = null;
+  if (!target_worker_id && rawPool != null && rawPool !== '' && rawPool !== 'auto') {
+    const pool = db.workerPools.find((item) => item.id === rawPool);
+    if (!pool || pool.status === 'archived') return null;
+    target_pool_id = rawPool;
+  }
+
+  if (target_worker_id) {
+    return { mode: 'worker', target_pool_id: null, target_worker_id };
+  }
+  if (target_pool_id) {
+    return { mode: 'pool', target_pool_id, target_worker_id: null };
+  }
+  return { mode: 'auto', target_pool_id: null, target_worker_id: null };
+}
+
+export function placementOf(row: { target_pool_id?: string | null; target_worker_id?: string | null }): Placement {
+  if (row.target_worker_id) {
+    return { mode: 'worker', target_pool_id: null, target_worker_id: row.target_worker_id };
+  }
+  if (row.target_pool_id) {
+    return { mode: 'pool', target_pool_id: row.target_pool_id, target_worker_id: null };
+  }
+  return { mode: 'auto', target_pool_id: null, target_worker_id: null };
 }
 
 export async function createSchedule(input: CreateScheduleInput): Promise<Schedule | null> {
@@ -488,8 +553,11 @@ export async function createSchedule(input: CreateScheduleInput): Promise<Schedu
   if (!task || task.status === 'archived') return null;
   const bot = db.bots.find((item) => item.id === task.bot_id);
   if (!bot || bot.status === 'archived') return null;
-  const targetPin = resolveTargetWorkerPin(input.target_worker_id);
-  if (targetPin === false) return null;
+  const placement = resolvePlacement({
+    target_pool_id: input.target_pool_id,
+    target_worker_id: input.target_worker_id,
+  });
+  if (!placement) return null;
   const timezone = validateTimezone(input.timezone ?? 'Asia/Shanghai');
   if (!timezone || !await validateCron(input.cron, timezone)) return null;
   if (!input.name.trim()) return null;
@@ -506,7 +574,8 @@ export async function createSchedule(input: CreateScheduleInput): Promise<Schedu
     description: input.description ?? null,
     cron: input.cron.trim(),
     timezone,
-    target_worker_id: targetPin,
+    target_pool_id: placement.target_pool_id,
+    target_worker_id: placement.target_worker_id,
     status: enabled ? 'enabled' : 'disabled',
     enabled,
     overlap_policy: 'skip',
@@ -527,13 +596,27 @@ export async function createSchedule(input: CreateScheduleInput): Promise<Schedu
   return schedule;
 }
 
+/** @deprecated Prefer setSchedulePlacement. */
 export function setScheduleTargetWorker(scheduleId: string, workerId: string | null): boolean {
+  return setSchedulePlacement(scheduleId, { target_worker_id: workerId, target_pool_id: null });
+}
+
+export function setSchedulePlacement(
+  scheduleId: string,
+  input: { target_pool_id?: string | null; target_worker_id?: string | null },
+): boolean {
   const schedule = db.schedules.find((item) => item.id === scheduleId);
   if (!schedule || schedule.status === 'archived') return false;
-  const targetPin = resolveTargetWorkerPin(workerId);
-  if (targetPin === false) return false;
-  if (schedule.target_worker_id === targetPin) return true;
-  schedule.target_worker_id = targetPin;
+  const placement = resolvePlacement(input);
+  if (!placement) return false;
+  if (
+    schedule.target_worker_id === placement.target_worker_id
+    && schedule.target_pool_id === placement.target_pool_id
+  ) {
+    return true;
+  }
+  schedule.target_pool_id = placement.target_pool_id;
+  schedule.target_worker_id = placement.target_worker_id;
   schedule.updated_at = now();
   emitHelpers.emit();
   return true;
@@ -578,7 +661,7 @@ function commitScheduleDecision(input: Decision): ScheduleRun | null {
   let taskRun: TaskRun | null = null;
   const task = db.tasks.find((item) => item.id === schedule.task_id) ?? null;
 
-  if (input.forcedFailure) {
+if (input.forcedFailure) {
     ({ reason, errorCode, errorMessage } = {
       reason: input.forcedFailure.reason,
       errorCode: input.forcedFailure.code,
@@ -599,7 +682,21 @@ function commitScheduleDecision(input: Decision): ScheduleRun | null {
   } else if (schedule.target_worker_id && !db.workers.some((item) => item.id === schedule.target_worker_id)) {
     status = 'skipped';
     reason = 'target_worker_missing';
-  } else {
+  } else if (schedule.target_pool_id && !schedule.target_worker_id) {
+    const pool = db.workerPools.find((item) => item.id === schedule.target_pool_id);
+    if (!pool || pool.status === 'archived') {
+      status = 'skipped';
+      reason = 'target_pool_missing';
+    } else if (pool.status !== 'enabled') {
+      status = 'skipped';
+      reason = 'target_pool_disabled';
+    } else if (pool.worker_ids.length === 0) {
+      status = 'skipped';
+      reason = 'target_pool_empty';
+    }
+  }
+
+  if (status !== 'skipped' && reason === 'create_task_failed' && !errorCode && task) {
     const resolved = resolvePublishedBotVersion(task.bot_id, task.bot_version_id);
     if (!resolved.ok) {
       errorCode = resolved.code;
@@ -611,13 +708,15 @@ function commitScheduleDecision(input: Decision): ScheduleRun | null {
       status = 'skipped';
       reason = 'previous_task_running';
     } else {
+      const placement = placementOf(schedule);
       taskRun = materializeTaskRun({
         task,
         resolution: resolved,
         run_type: 'schedule',
         schedule_id: schedule.id,
         schedule_run_id: runId,
-        target_worker_id: schedule.target_worker_id,
+        target_pool_id: placement.target_pool_id,
+        target_worker_id: placement.target_worker_id,
         input_source: task.input_source,
         input_file_id: task.input_file_id,
         input_params: task.input_params,
@@ -776,6 +875,101 @@ export function toggleWorker(workerId: string): void {
     worker.session_id = uid('sess');
   }
   emitHelpers.emit();
+}
+
+/**
+ * Replace operator-managed user tags on a Worker.
+ * System tags are never writable from the console.
+ */
+export function setWorkerUserTags(workerId: string, tags: string[]): boolean {
+  const worker = db.workers.find((item) => item.id === workerId);
+  if (!worker) return false;
+  const next = Array.from(
+    new Set(
+      tags
+        .map((tag) => tag.trim())
+        .filter(Boolean)
+        // User tags must not collide with system tags (system wins identity).
+        .filter((tag) => !worker.system_tags.includes(tag)),
+    ),
+  );
+  worker.user_tags = next;
+  emitHelpers.emit();
+  return true;
+}
+
+// ---- Worker Pools ----
+
+export interface CreateWorkerPoolInput {
+  name: string;
+  description?: string | null;
+  tags?: string[];
+  worker_ids?: string[];
+  enabled?: boolean;
+}
+
+export function createWorkerPool(input: CreateWorkerPoolInput): WorkerPool | null {
+  const name = input.name.trim();
+  if (!name) return null;
+  const workerIds = Array.from(new Set((input.worker_ids ?? []).filter((id) => db.workers.some((w) => w.id === id))));
+  const ts = now();
+  const enabled = input.enabled ?? true;
+  const pool: WorkerPool = {
+    id: uid('wpool'),
+    name,
+    description: input.description?.trim() || null,
+    tags: (input.tags ?? []).map((tag) => tag.trim()).filter(Boolean),
+    worker_ids: workerIds,
+    status: enabled ? 'enabled' : 'disabled',
+    enabled,
+    created_by: 'user_demo',
+    created_at: ts,
+    updated_at: ts,
+  };
+  db.workerPools.unshift(pool);
+  emitHelpers.emit();
+  return pool;
+}
+
+export function toggleWorkerPool(poolId: string): boolean {
+  const pool = db.workerPools.find((item) => item.id === poolId);
+  if (!pool || pool.status === 'archived') return false;
+  pool.status = pool.status === 'enabled' ? 'disabled' : 'enabled';
+  pool.enabled = pool.status === 'enabled';
+  pool.updated_at = now();
+  emitHelpers.emit();
+  return true;
+}
+
+export function setWorkerPoolMembers(poolId: string, workerIds: string[]): boolean {
+  const pool = db.workerPools.find((item) => item.id === poolId);
+  if (!pool || pool.status === 'archived') return false;
+  pool.worker_ids = Array.from(new Set(workerIds.filter((id) => db.workers.some((w) => w.id === id))));
+  pool.updated_at = now();
+  emitHelpers.emit();
+  return true;
+}
+
+export function updateWorkerPool(
+  poolId: string,
+  patch: { name?: string; description?: string | null; tags?: string[] },
+): boolean {
+  const pool = db.workerPools.find((item) => item.id === poolId);
+  if (!pool || pool.status === 'archived') return false;
+  if (typeof patch.name === 'string') {
+    const name = patch.name.trim();
+    if (!name) return false;
+    pool.name = name;
+  }
+  if (patch.description !== undefined) {
+    pool.description = patch.description?.trim() || null;
+  }
+  if (patch.tags) {
+    pool.tags = patch.tags.map((tag) => tag.trim()).filter(Boolean);
+  }
+  pool.updated_at = now();
+  emitHelpers.emit();
+  return true;
 }
 
 export const logsForTaskRun = (taskRunId: string) => db.logs.filter((entry) => entry.task_run_id === taskRunId).sort((a, b) => a.seq - b.seq);

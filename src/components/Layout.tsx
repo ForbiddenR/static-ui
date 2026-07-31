@@ -15,10 +15,11 @@ interface NavItem {
 const NAV: NavItem[] = [
   { to: '/', key: 'nav.dashboard', idx: '00' },
   { to: '/workers', key: 'nav.workers', idx: '01', section: 'nav.section.observe' },
-  { to: '/job-definitions', key: 'nav.jobDefinitions', idx: '02', section: 'nav.section.ops' },
-  { to: '/tasks', key: 'nav.tasks', idx: '03' },
-  { to: '/schedules', key: 'nav.schedules', idx: '04' },
-  { to: '/task-runs', key: 'nav.taskRuns', idx: '05' },
+  { to: '/worker-pools', key: 'nav.workerPools', idx: '02' },
+  { to: '/job-definitions', key: 'nav.jobDefinitions', idx: '03', section: 'nav.section.ops' },
+  { to: '/tasks', key: 'nav.tasks', idx: '04' },
+  { to: '/schedules', key: 'nav.schedules', idx: '05' },
+  { to: '/task-runs', key: 'nav.taskRuns', idx: '06' },
 ];
 
 export default function Layout() {

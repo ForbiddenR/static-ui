@@ -19,6 +19,8 @@ const ScheduleDetail = lazy(() => import('./pages/ScheduleDetail'));
 const ScheduleRunDetail = lazy(() => import('./pages/ScheduleRunDetail'));
 const WorkersConsole = lazy(() => import('./pages/WorkersConsole'));
 const WorkerDetail = lazy(() => import('./pages/WorkerDetail'));
+const WorkerPoolsConsole = lazy(() => import('./pages/WorkerPoolsConsole'));
+const WorkerPoolDetail = lazy(() => import('./pages/WorkerPoolDetail'));
 
 function LegacyJobDefinitionRedirect() {
   const { botId } = useParams();
@@ -50,6 +52,8 @@ export default function App() {
               <Route path="schedule-runs/:runId" element={<ScheduleRunDetail />} />
               <Route path="workers" element={<WorkersConsole />} />
               <Route path="workers/:workerId" element={<WorkerDetail />} />
+              <Route path="worker-pools" element={<WorkerPoolsConsole />} />
+              <Route path="worker-pools/:poolId" element={<WorkerPoolDetail />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Route>
           </Routes>

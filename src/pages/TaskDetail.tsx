@@ -4,6 +4,7 @@ import { useI18n } from '../i18n';
 import { useDB } from '../hooks';
 import { Panel } from '../components/ui';
 import { BackLink, DetailHero, Progress, ScheduleNextRun, StatusBadge, timeShort } from '../components/console';
+import { PlacementSelect, tokenToPlacement } from '../components/PlacementSelect';
 import { runTask, toggleTask } from '../store/api';
 
 const TERMINAL = new Set(['success', 'partial_success', 'failed', 'canceled', 'timeout']);
@@ -17,7 +18,7 @@ export default function TaskDetail() {
   const db = useDB();
   const { taskId } = useParams();
   const navigate = useNavigate();
-  const [workerId, setWorkerId] = useState('');
+  const [placementToken, setPlacementToken] = useState('');
   const [runErr, setRunErr] = useState('');
 
   const task = db.tasks.find((item) => item.id === taskId);
@@ -44,13 +45,20 @@ export default function TaskDetail() {
     && db.bots.find((bot) => bot.id === task.bot_id)?.status === 'enabled';
 
   const run = () => {
-    if (!workerId) {
+    if (!placementToken) {
       setRunErr(t('tasks.err.worker'));
       return;
     }
     setRunErr('');
-    const target = workerId === 'auto' ? null : workerId;
-    const taskRun = runTask(task.id, { target_worker_id: target });
+    const placement = tokenToPlacement(placementToken);
+    if (!placement) {
+      setRunErr(t('tasks.err.worker'));
+      return;
+    }
+    const taskRun = runTask(task.id, {
+      target_pool_id: placement.target_pool_id,
+      target_worker_id: placement.target_worker_id,
+    });
     if (taskRun) navigate(`/task-runs/${taskRun.id}`);
     else setRunErr(t('tasks.err.run'));
   };
@@ -63,28 +71,21 @@ export default function TaskDetail() {
           {runErr && <span className="chip amber">{runErr}</span>}
         </div>
         <div className="left run-target-ctl">
-          <label className="run-target-label" htmlFor="task-run-worker">
+          <label className="run-target-label" htmlFor="task-run-placement">
             {t('tasks.f.worker')}
           </label>
-          <select
-            id="task-run-worker"
-            value={workerId}
+          <PlacementSelect
+            id="task-run-placement"
+            value={placementToken}
             disabled={!canRun}
-            onChange={(event) => {
-              setWorkerId(event.target.value);
+            requireChoice
+            aria-label={t('tasks.f.worker')}
+            onChange={(token) => {
+              setPlacementToken(token);
               if (runErr) setRunErr('');
             }}
-            aria-label={t('tasks.f.worker')}
-          >
-            <option value="">{t('tasks.f.worker.pick')}</option>
-            <option value="auto">{t('tasks.f.worker.auto')}</option>
-            {db.workers.map((worker) => (
-              <option key={worker.id} value={worker.id}>
-                {worker.name} // {worker.status} // {worker.capacity_used}/{worker.capacity_max}
-              </option>
-            ))}
-          </select>
-          <button className="btn sm" type="button" onClick={run} disabled={!canRun || !workerId}>
+          />
+          <button className="btn sm" type="button" onClick={run} disabled={!canRun || !placementToken}>
             ▶ {t('tasks.run')}
           </button>
           <div className="admission-ctl">

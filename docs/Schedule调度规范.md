@@ -61,6 +61,8 @@ Job Definition -> Schedule -> ScheduleRun -> Task
 | `input_params` | object | 否 | 每次触发传给 Task 的 JSON 参数 |
 | `config` | object | 否 | 每次触发传给 Task 的运行配置覆盖项 |
 | `requirements` | object | 否 | 每次触发传给 Task 的运行要求覆盖项 |
+| `target_pool_id` | string | 否 | 投放工作池；与 `target_worker_id` 互斥，节点 pin 优先 |
+| `target_worker_id` | string | 否 | 投放指定 Worker 节点；非空时忽略 `target_pool_id` |
 | `overlap_policy` | string | 是 | 到点时上一轮未完成的处理策略 |
 | `missed_run_policy` | string | 是 | Master 停机或延迟导致错过触发时间时的处理策略 |
 | `jitter_seconds` | integer | 是 | 最大随机延迟秒数；每次触发实际延迟范围为 `0` 到该值 |
@@ -206,11 +208,27 @@ POST /api/schedules
 | `input_params` | object | 否 | `{}` | JSON 输入参数 |
 | `config` | object | 否 | `{}` | 运行配置 |
 | `requirements` | object | 否 | `{}` | 运行要求 |
+| `target_pool_id` | string | 否 | `null` | 投放工作池 ID；与 `target_worker_id` 互斥 |
+| `target_worker_id` | string | 否 | `null` | 投放 Worker 节点 ID；`null` / 省略表示不 pin 节点 |
 | `overlap_policy` | string | 否 | `skip` | 重叠策略 |
 | `missed_run_policy` | string | 否 | `skip` | 错过触发策略 |
 | `jitter_seconds` | integer | 否 | `0` | 最大随机延迟秒数，必须大于等于 `0` |
 | `max_parallel_runs` | integer | 否 | `1` | 最大并行数 |
 | `enabled` | boolean | 否 | `true` | 是否创建后立即启用 |
+
+投放（placement）语义：
+
+```text
+两者皆空 → auto dispatch（在全部合格 Worker 中调度）
+仅 target_pool_id → 在该 Worker Pool 成员中调度
+仅 target_worker_id 或两者皆有 → 节点 pin（worker 优先，清除 pool）
+创建时未知 pool / worker → 422 INVALID_INPUT
+触发时池缺失 / 禁用 / 空成员 → ScheduleRun skipped
+  reason: target_pool_missing | target_pool_disabled | target_pool_empty
+触发时 pin 的 worker 不存在 → ScheduleRun skipped，reason: target_worker_missing
+成功创建 Task 时把 placement 冻结到 Task.target_*，之后 Schedule 改投放不影响已创建 Task
+权威调度规则见 [Worker 调度 / Placement](Worker协议与运行时.md#worker-dispatch)
+```
 
 请求示例：
 

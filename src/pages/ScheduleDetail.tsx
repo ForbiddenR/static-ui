@@ -4,7 +4,8 @@ import { useI18n } from '../i18n';
 import { useDB } from '../hooks';
 import { Panel } from '../components/ui';
 import { BackLink, DetailHero, ScheduleNextRun, StatusBadge, timeShort } from '../components/console';
-import { refreshScheduleNextRuns, setScheduleTargetWorker, toggleSchedule, triggerSchedule } from '../store/api';
+import { PlacementSelect, placementToToken, tokenToPlacement } from '../components/PlacementSelect';
+import { refreshScheduleNextRuns, setSchedulePlacement, toggleSchedule, triggerSchedule } from '../store/api';
 import type { ScheduleRun } from '../store/db';
 
 function triggerFeedback(run: ScheduleRun): string {
@@ -39,7 +40,12 @@ export default function ScheduleDetail() {
   const runs = db.runs.filter((run) => run.schedule_id === schedule.id);
   const materialized = runs.filter((run) => run.status === 'task_created');
   const task = db.tasks.find((item) => item.id === schedule.task_id);
-  const targetWorker = db.workers.find((item) => item.id === schedule.target_worker_id);
+  const targetWorker = schedule.target_worker_id
+    ? db.workers.find((item) => item.id === schedule.target_worker_id)
+    : undefined;
+  const targetPool = schedule.target_pool_id
+    ? db.workerPools.find((item) => item.id === schedule.target_pool_id)
+    : undefined;
   const lastTaskRun = schedule.last_task_run_id
     ? db.taskRuns.find((item) => item.id === schedule.last_task_run_id)
     : undefined;
@@ -53,10 +59,16 @@ export default function ScheduleDetail() {
     }
   };
 
-  const reappointWorker = (workerId: string) => {
-    const pin = workerId === 'auto' ? null : workerId;
-    if (pin === schedule.target_worker_id) return;
-    setScheduleTargetWorker(schedule.id, pin);
+  const reappointPlacement = (token: string) => {
+    const placement = tokenToPlacement(token);
+    if (!placement) return;
+    if (
+      placement.target_worker_id === schedule.target_worker_id
+      && placement.target_pool_id === schedule.target_pool_id
+    ) {
+      return;
+    }
+    setSchedulePlacement(schedule.id, placement);
   };
 
   return (
@@ -150,19 +162,12 @@ export default function ScheduleDetail() {
             <dt>{t('sch.f.worker')}</dt>
             <dd>
               <div className="schedule-worker-appoint">
-                <select
-                  value={schedule.target_worker_id ?? 'auto'}
+                <PlacementSelect
+                  value={placementToToken(schedule)}
                   disabled={schedule.status === 'archived'}
-                  onChange={(event) => reappointWorker(event.target.value)}
+                  onChange={reappointPlacement}
                   aria-label={t('sch.f.worker')}
-                >
-                  <option value="auto">{t('sch.f.worker.auto')}</option>
-                  {db.workers.map((worker) => (
-                    <option key={worker.id} value={worker.id}>
-                      {worker.name} // {worker.status} // {worker.capacity_used}/{worker.capacity_max}
-                    </option>
-                  ))}
-                </select>
+                />
                 {targetWorker ? (
                   <button
                     className="btn ghost sm relationship-link"
@@ -171,8 +176,16 @@ export default function ScheduleDetail() {
                   >
                     {targetWorker.name}
                   </button>
+                ) : targetPool ? (
+                  <button
+                    className="btn ghost sm relationship-link"
+                    type="button"
+                    onClick={() => navigate(`/worker-pools/${targetPool.id}`)}
+                  >
+                    {targetPool.name}
+                  </button>
                 ) : (
-                  <span className="chip violet">{t('sch.f.worker.auto')}</span>
+                  <span className="chip violet">{t('place.auto')}</span>
                 )}
               </div>
             </dd>

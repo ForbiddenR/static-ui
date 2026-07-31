@@ -14,12 +14,15 @@ identifiers.
 - **Task Runs** (`/task-runs`) — live executions of a Task template. Status machine
   `pending → dispatching → running → success | partial_success | failed | canceled | timeout`,
   with progress, cancel, retry-all, retry-failed-items, re-run, TaskItem detail, and terminal logs.
-- **Schedule Control** (`/schedules`) — binds a **Task** (not a Job Definition). Timing and policies only: cron/timezone, `skip | run_once` missed-run policy, jitter, initial status. Every decision is a ScheduleRun (`task_created | skipped | failed`) with optional TaskRun drilldown.
-- **Worker Pool** (`/workers`) — online/offline and enabled state, capacity use, tags, runtime version,
-  session and heartbeat metadata, assigned TaskRun drilldown, capacity-aware mock dispatch, live per-node
-  telemetry sparklines (CPU / memory / throughput / heartbeat RTT with hover scrubbing), and a
-  streaming worker log (session, dispatch, heartbeat, and runtime events).
-- **Full-page detail views** — Job Definitions, tasks, task runs, schedules, schedule runs, and workers open dedicated routes
+- **Schedule Control** (`/schedules`) — binds a **Task** (not a Job Definition). Timing, policies, and **placement** (auto dispatch / worker pool / worker node): cron/timezone, `skip | run_once` missed-run policy, jitter, initial status. Every decision is a ScheduleRun (`task_created | skipped | failed`) with optional TaskRun drilldown.
+- **Workers** (`/workers`) — individual nodes: online/offline and enabled state, capacity use,
+  **system tags** (registration, read-only) and **user tags** (operator-editable on the detail page),
+  pool membership, **runtimes** (e.g. `python3.12`, system-reported) vs agent **version** (`workerd/…`),
+  session and heartbeat metadata, assigned TaskRun drilldown,
+  capacity-aware mock dispatch, live per-node telemetry sparklines (CPU / memory / throughput /
+  heartbeat RTT with hover scrubbing), and a streaming worker log (session, dispatch, heartbeat, and runtime events).
+- **Worker Pools** (`/worker-pools`) — named placement groups with shared tags and explicit member workers. Schedules and manual runs can target a pool; dispatch stays among online, enabled members with free capacity. Node capacity remains authoritative.
+- **Full-page detail views** — Job Definitions, tasks, task runs, schedules, schedule runs, workers, and worker pools open dedicated routes
   with a corner-bracketed HUD hero, terminal-style `cd ..` back link, live stat strip, and
   cross-linked related records.
 - **Mock execution engine** — a 1.5 s heartbeat advances active TaskRuns through the real lifecycle,
@@ -44,16 +47,20 @@ codes and environment variables, `bot_sdk`, `bot_script`, `botops-theme`,
 ```text
 Job Definition → Task (template) → Schedule → ScheduleRun → TaskRun
                └─────────────────→ TaskRun (manual / api / retry / rerun)
+
+Placement (on Schedule and TaskRun):
+  auto dispatch | Worker Pool | Worker node pin
+  worker pin > pool membership > all eligible online workers
 ```
 
 - **Task** binds a Job Definition (optional version pin + input/config/priority template).
-- **Schedule** binds a Task; it does not own execution input fields.
-- **TaskRun** is one live execution (status machine, worker, items, logs) with frozen `bot_snapshot`.
+- **Schedule** binds a Task; it does not own execution input fields. It stores durable placement (`target_pool_id` / `target_worker_id`).
+- **TaskRun** is one live execution (status machine, placement freeze, assigned worker, items, logs) with frozen `bot_snapshot`.
+- **Worker Pool** is a first-class placement target (explicit members + tags), not a nested pool-of-pools.
 
-> This remodel is **static UI mock only** (`src/store`, pages, i18n, tests).
-> `server-rs/` and `docs/` still describe the older
-> `Job Definition → Schedule → ScheduleRun → Task(execution)` chain until a
-> follow-up contract pass.
+> The static mock (`src/store`, pages, i18n, tests) models Task templates + TaskRuns + Worker Pools.
+> `docs/` now document Worker Pool / placement alongside the V1 Worker contract.
+> `server-rs/` may still lag until a backend contract pass.
 
 ## Execution Provenance
 
@@ -82,7 +89,7 @@ The build uses hash routing and relative asset paths, so `dist/` can be hosted f
 
 ## Mock limitation
 
-The static mock is designed for a single browser tab. It has lightweight in-memory duplicate protection for cron decisions, but it does not coordinate `localStorage` state or schedule ownership across tabs. Pre-v6 stored databases are reseeded on load (schema version 6).
+The static mock is designed for a single browser tab. It has lightweight in-memory duplicate protection for cron decisions, but it does not coordinate `localStorage` state or schedule ownership across tabs. Pre-v6 stored databases are reseeded on load; v6–v8 storage migrates to schema version 9 (Worker Pools, placement, system/user tags, and system-reported `runtimes`).
 
 ## Performance
 
@@ -106,7 +113,8 @@ src/
   pages/           Dashboard + entity views: JobDefinitionsConsole/JobDefinitionDetail,
                    TasksConsole/TaskDetail, TaskRunsConsole/TaskRunDetail,
                    SchedulesConsole/ScheduleDetail/ScheduleRunDetail,
-                   WorkersConsole/WorkerDetail
+                   WorkersConsole/WorkerDetail, WorkerPoolsConsole/WorkerPoolDetail
+  components/      … + PlacementSelect (auto | pool | worker)
 ```
 
 See `docs/作业定义规范.md` for the Job Definition specification.

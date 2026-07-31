@@ -48,7 +48,11 @@ export interface TaskRun {
   schedule_id: string | null; schedule_run_id: string | null; source_task_run_id: string | null;
   status: TaskStatus; run_type: TaskRunType; input_source: InputSource; input_file_id: string | null; input_params: JsonObject;
   config: JsonObject; requirements: JsonObject; priority: number; entrypoint: string; statistics: TaskStatistics; items: TaskItem[];
-  /** Preferred worker for dispatch (from Schedule appointment or explicit run pin). */
+  /**
+   * Placement frozen at materialize.
+   * worker pin wins over pool; both null = auto dispatch among all eligible nodes.
+   */
+  target_pool_id: string | null;
   target_worker_id: string | null;
   worker_id: string | null; error_code: string | null; created_at: string; updated_at: string; finished_at: string | null;
 }
@@ -58,7 +62,11 @@ export type ScheduleOverlapPolicy = 'skip'; export type ScheduleMissedRunPolicy 
 export interface Schedule {
   id: string; task_id: string; bot_id: string; bot_code: string; name: string; description: string | null;
   cron: string; timezone: string;
-  /** Worker appointed for every TaskRun; null = auto-dispatch among eligible workers. */
+  /**
+   * Durable placement for every fire.
+   * target_worker_id pin wins; else target_pool_id scopes candidates; both null = auto dispatch.
+   */
+  target_pool_id: string | null;
   target_worker_id: string | null;
   /** status is authoritative; enabled remains for old screens. */ status: 'enabled' | 'disabled' | 'archived'; enabled: boolean;
   overlap_policy: ScheduleOverlapPolicy; missed_run_policy: ScheduleMissedRunPolicy; jitter_seconds: number; max_parallel_runs: number;
@@ -73,7 +81,55 @@ export interface ScheduleRun {
   error_code: string | null; error_message: string | null; created_at: string;
 }
 export interface LogEntry { id: string; task_run_id: string; seq: number; level: 'debug' | 'info' | 'warning' | 'error'; source: 'script' | 'worker' | 'runtime' | 'master' | 'system'; message: string; created_at: string; }
-export interface Worker { id: string; name: string; status: 'online' | 'offline'; enabled: boolean; capacity_max: number; capacity_used: number; tags: string[]; version: string; session_id: string | null; current_task_run_ids: string[]; last_heartbeat_at: string; created_at: string; }
+/**
+ * Worker node tags:
+ * - system_tags: reported at registration / Hello (immutable from the console)
+ * - user_tags: operator-managed labels editable on the website
+ * Combined display helpers use both; matching / grouping may use either.
+ */
+export interface Worker {
+  id: string;
+  name: string;
+  status: 'online' | 'offline';
+  enabled: boolean;
+  capacity_max: number;
+  capacity_used: number;
+  /**
+   * Supported script runtimes reported at Hello, e.g. ["python3.12"].
+   * System-owned (not editable in the console). Used for requirements.runtime matching.
+   */
+  runtimes: string[];
+  system_tags: string[];
+  user_tags: string[];
+  /** Worker process version (workerd), not the Python interpreter version. */
+  version: string;
+  session_id: string | null;
+  current_task_run_ids: string[];
+  last_heartbeat_at: string;
+  created_at: string;
+}
+
+/** Combined tag list for display (system first, then user). */
+export function workerAllTags(worker: { system_tags?: string[]; user_tags?: string[]; tags?: string[] }): string[] {
+  if (Array.isArray(worker.system_tags) || Array.isArray(worker.user_tags)) {
+    return [...(worker.system_tags ?? []), ...(worker.user_tags ?? [])];
+  }
+  // Legacy single-list rows before schema 8.
+  return Array.isArray(worker.tags) ? worker.tags : [];
+}
+/** Named placement group of interchangeable worker nodes (shared tags / capacity profile). */
+export interface WorkerPool {
+  id: string;
+  name: string;
+  description: string | null;
+  tags: string[];
+  worker_ids: string[];
+  status: 'enabled' | 'disabled' | 'archived';
+  enabled: boolean;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
 export interface WorkerMetricPoint { ts: string; cpu_pct: number; mem_pct: number; items_per_min: number; rtt_ms: number; }
 export interface WorkerLogEntry { id: string; worker_id: string; seq: number; level: 'debug' | 'info' | 'warning' | 'error'; source: 'heartbeat' | 'dispatch' | 'runtime' | 'session' | 'master'; message: string; created_at: string; }
 export interface DB {
@@ -86,11 +142,12 @@ export interface DB {
   runs: ScheduleRun[];
   logs: LogEntry[];
   workers: Worker[];
+  workerPools: WorkerPool[];
   workerMetrics: Record<string, WorkerMetricPoint[]>;
   workerLogs: WorkerLogEntry[];
 }
 
-const KEY = 'botops-db-v2'; const SCHEMA_VERSION = 6; let counter = 0;
+const KEY = 'botops-db-v2'; const SCHEMA_VERSION = 9; let counter = 0;
 export const uid = (prefix: string) => `${prefix}_${Date.now().toString(36)}${(++counter).toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 export const now = () => new Date().toISOString();
 const stats = (items: TaskItem[]): TaskStatistics => {
@@ -267,34 +324,34 @@ function seed(): DB {
     schedule_id: null, schedule_run_id: null, source_task_run_id: null, status, run_type: 'manual',
     input_source: task.input_source, input_file_id: task.input_file_id, input_params: { ...task.input_params },
     config: { ...task.config }, requirements: { ...task.requirements }, priority: task.priority, entrypoint: 'main.py',
-    statistics: stats(items), items, target_worker_id: null, worker_id: null, error_code: null, created_at: ts, updated_at: ts,
+    statistics: stats(items), items, target_pool_id: null, target_worker_id: null, worker_id: null, error_code: null, created_at: ts, updated_at: ts,
     finished_at: status === 'running' ? null : ts, ...extra,
   });
 
   const taskRuns: TaskRun[] = [
     taskRun('trun_9f2c01', tasks[0], botA, 'bv_inv_3', successful, 'success', {
       run_type: 'schedule', schedule_id: 'sch_nightly_inv', schedule_run_id: 'srun_1',
-      input_params: { window: '2026-07-20' }, target_worker_id: 'worker_edge_01', worker_id: 'worker_edge_01',
+      input_params: { window: '2026-07-20' }, target_pool_id: null, target_worker_id: 'worker_edge_01', worker_id: 'worker_edge_01',
     }),
     taskRun('trun_7ab3d4', tasks[1], botB, 'bv_prc_2', partial, 'partial_success', {
-      input_params: { category: 'gpu' }, worker_id: 'worker_edge_02',
+      input_params: { category: 'gpu' }, target_pool_id: 'wpool_edge', worker_id: 'worker_edge_02',
     }),
     taskRun('trun_55e8aa', tasks[2], botB, 'bv_prc_2', active, 'running', {
-      input_params: { category: 'cpu' }, worker_id: 'worker_edge_01',
+      input_params: { category: 'cpu' }, target_pool_id: 'wpool_edge', worker_id: 'worker_edge_01',
     }),
   ];
 
   const schedules: Schedule[] = [
     {
       id: 'sch_nightly_inv', task_id: 'task_nightly_inv', bot_id: botA.id, bot_code: botA.code, name: 'Nightly invoice sync', description: null,
-      cron: '0 2 * * *', timezone: 'Asia/Shanghai', target_worker_id: 'worker_edge_01',
+      cron: '0 2 * * *', timezone: 'Asia/Shanghai', target_pool_id: null, target_worker_id: 'worker_edge_01',
       status: 'enabled', enabled: true, overlap_policy: 'skip', missed_run_policy: 'skip',
       jitter_seconds: 300, max_parallel_runs: 1, last_run_at: ts, last_task_run_id: 'trun_9f2c01', next_planned_at: null, next_run_at: null,
       created_by: 'user_demo', created_at: ts, updated_at: ts, archived_at: null,
     },
     {
       id: 'sch_hourly_price', task_id: 'task_price_all', bot_id: botB.id, bot_code: botB.code, name: 'Hourly price sweep', description: null,
-      cron: '7 * * * *', timezone: 'UTC', target_worker_id: 'worker_edge_02',
+      cron: '7 * * * *', timezone: 'UTC', target_pool_id: 'wpool_edge', target_worker_id: null,
       status: 'disabled', enabled: false, overlap_policy: 'skip', missed_run_policy: 'run_once',
       jitter_seconds: 60, max_parallel_runs: 1, last_run_at: null, last_task_run_id: null, next_planned_at: null, next_run_at: null,
       created_by: 'user_demo', created_at: ts, updated_at: ts, archived_at: null,
@@ -308,9 +365,43 @@ function seed(): DB {
   }];
 
   const workers: Worker[] = [
-    { id: 'worker_edge_01', name: 'edge-01', status: 'online', enabled: true, capacity_max: 4, capacity_used: 1, tags: ['gpu', 'cn-shanghai'], version: 'workerd/1.4.2', session_id: 'sess_a91f', current_task_run_ids: ['trun_55e8aa'], last_heartbeat_at: ts, created_at: ts },
-    { id: 'worker_edge_02', name: 'edge-02', status: 'online', enabled: true, capacity_max: 2, capacity_used: 0, tags: ['cn-beijing'], version: 'workerd/1.4.2', session_id: 'sess_b207', current_task_run_ids: [], last_heartbeat_at: ts, created_at: ts },
-    { id: 'worker_batch_01', name: 'batch-01', status: 'offline', enabled: false, capacity_max: 8, capacity_used: 0, tags: ['batch', 'high-mem'], version: 'workerd/1.3.9', session_id: null, current_task_run_ids: [], last_heartbeat_at: ts, created_at: ts },
+    {
+      id: 'worker_edge_01', name: 'edge-01', status: 'online', enabled: true,
+      capacity_max: 4, capacity_used: 1,
+      runtimes: ['python3.12'],
+      system_tags: ['gpu', 'cn-shanghai'], user_tags: ['finance-edge'],
+      version: 'workerd/1.4.2', session_id: 'sess_a91f', current_task_run_ids: ['trun_55e8aa'],
+      last_heartbeat_at: ts, created_at: ts,
+    },
+    {
+      id: 'worker_edge_02', name: 'edge-02', status: 'online', enabled: true,
+      capacity_max: 2, capacity_used: 0,
+      runtimes: ['python3.11', 'python3.12'],
+      system_tags: ['cn-beijing'], user_tags: [],
+      version: 'workerd/1.4.2', session_id: 'sess_b207', current_task_run_ids: [],
+      last_heartbeat_at: ts, created_at: ts,
+    },
+    {
+      id: 'worker_batch_01', name: 'batch-01', status: 'offline', enabled: false,
+      capacity_max: 8, capacity_used: 0,
+      runtimes: ['python3.10'],
+      system_tags: ['batch', 'high-mem'], user_tags: ['nightly'],
+      version: 'workerd/1.3.9', session_id: null, current_task_run_ids: [],
+      last_heartbeat_at: ts, created_at: ts,
+    },
+  ];
+
+  const workerPools: WorkerPool[] = [
+    {
+      id: 'wpool_edge', name: 'Edge fleet', description: 'Online edge nodes for interactive crawls and syncs.',
+      tags: ['edge', 'online'], worker_ids: ['worker_edge_01', 'worker_edge_02'],
+      status: 'enabled', enabled: true, created_by: 'user_demo', created_at: ts, updated_at: ts,
+    },
+    {
+      id: 'wpool_batch', name: 'Batch high-mem', description: 'Offline-capable batch capacity class.',
+      tags: ['batch', 'high-mem'], worker_ids: ['worker_batch_01'],
+      status: 'enabled', enabled: true, created_by: 'user_demo', created_at: ts, updated_at: ts,
+    },
   ];
 
   const logs: LogEntry[] = [
@@ -346,7 +437,7 @@ function seed(): DB {
     { id: 'wlog_8', worker_id: 'worker_batch_01', seq: 8, level: 'warning', source: 'master', message: 'admission disabled by operator', created_at: ts },
   ];
 
-  return { schema_version: SCHEMA_VERSION, bots: [botA, botB], versions, tasks, taskRuns, schedules, runs, logs, workers, workerMetrics, workerLogs };
+  return { schema_version: SCHEMA_VERSION, bots: [botA, botB], versions, tasks, taskRuns, schedules, runs, logs, workers, workerPools, workerMetrics, workerLogs };
 }
 
 /** Prefer a clean seed when older schemas cannot be reliably upgraded in the mock. */
@@ -360,9 +451,13 @@ function migratePersistedDB(value: unknown): { db: DB; changed: boolean } | null
     Array.isArray(candidate) && candidate.every(isRecord)
   );
 
-  // Completed v6 data still receives relationship reconciliation so a partial
-  // browser write cannot leave one-sided ScheduleRun ↔ TaskRun provenance.
-  if (parsed.schema_version === SCHEMA_VERSION
+  // v6–v9 (and repaired intermediates) receive relationship reconciliation so a
+  // partial browser write cannot leave one-sided ScheduleRun ↔ TaskRun provenance.
+  const schemaOk = parsed.schema_version === SCHEMA_VERSION
+    || parsed.schema_version === 8
+    || parsed.schema_version === 7
+    || parsed.schema_version === 6;
+  if (schemaOk
     && hasRecords(parsed.bots)
     && hasRecords(parsed.versions)
     && hasRecords(parsed.tasks)
@@ -377,13 +472,42 @@ function migratePersistedDB(value: unknown): { db: DB; changed: boolean } | null
   ) {
     const database = parsed as DB;
     let changed = false;
-    // Normalize worker assignment field name if a partial write left a gap.
+    if (parsed.schema_version !== SCHEMA_VERSION) {
+      database.schema_version = SCHEMA_VERSION;
+      changed = true;
+    }
+    if (!Array.isArray(database.workerPools)) {
+      database.workerPools = [];
+      changed = true;
+    }
+    // Normalize worker assignment field name + system/user tag split.
     database.workers.forEach((worker) => {
       const raw = worker as unknown as Record<string, unknown>;
       if (!Array.isArray(worker.current_task_run_ids)) {
         worker.current_task_run_ids = Array.isArray(raw.current_task_ids)
           ? (raw.current_task_ids as string[])
           : [];
+        changed = true;
+      }
+      // Schema ≤7 used a single `tags` list (registration-origin). Promote to system_tags.
+      if (!Array.isArray(worker.system_tags)) {
+        worker.system_tags = Array.isArray(raw.tags)
+          ? (raw.tags as string[]).map((tag) => String(tag).trim()).filter(Boolean)
+          : [];
+        changed = true;
+      }
+      if (!Array.isArray(worker.user_tags)) {
+        worker.user_tags = [];
+        changed = true;
+      }
+      // Schema ≤8 lacked runtimes; default to a common Python runtime for mock continuity.
+      if (!Array.isArray(worker.runtimes)) {
+        worker.runtimes = ['python3.12'];
+        changed = true;
+      }
+      // Drop legacy combined field if present so callers don't prefer the stale list.
+      if ('tags' in raw) {
+        delete raw.tags;
         changed = true;
       }
     });
@@ -394,22 +518,66 @@ function migratePersistedDB(value: unknown): { db: DB; changed: boolean } | null
         changed = true;
       }
     });
-    // Normalize target_worker_id: string pin, or null for auto dispatch.
-    database.schedules.forEach((schedule) => {
-      const raw = schedule as unknown as Record<string, unknown>;
-      if (raw.target_worker_id === null || raw.target_worker_id === '' || raw.target_worker_id === 'auto' || raw.target_worker_id === 'random') {
-        if (schedule.target_worker_id !== null) {
-          schedule.target_worker_id = null;
-          changed = true;
+    // Normalize placement: worker pin, pool scope, or null for auto dispatch.
+    const normalizePlacement = (row: { target_pool_id?: string | null; target_worker_id?: string | null }, raw: Record<string, unknown>) => {
+      let rowChanged = false;
+      const rawWorker = raw.target_worker_id;
+      if (rawWorker === null || rawWorker === '' || rawWorker === 'auto' || rawWorker === 'random') {
+        if (row.target_worker_id !== null) {
+          row.target_worker_id = null;
+          rowChanged = true;
         }
-      } else if (typeof schedule.target_worker_id !== 'string') {
-        schedule.target_worker_id = typeof raw.target_worker_id === 'string' ? raw.target_worker_id : null;
-        changed = true;
+      } else if (typeof rawWorker === 'string') {
+        if (row.target_worker_id !== rawWorker) {
+          row.target_worker_id = rawWorker;
+          rowChanged = true;
+        }
+      } else if (typeof row.target_worker_id !== 'string' && row.target_worker_id !== null) {
+        row.target_worker_id = null;
+        rowChanged = true;
       }
+      const rawPool = raw.target_pool_id;
+      if (rawPool === null || rawPool === '' || rawPool === undefined) {
+        if (row.target_pool_id !== null && row.target_pool_id !== undefined) {
+          row.target_pool_id = null;
+          rowChanged = true;
+        } else if (row.target_pool_id === undefined) {
+          row.target_pool_id = null;
+          rowChanged = true;
+        }
+      } else if (typeof rawPool === 'string') {
+        if (row.target_pool_id !== rawPool) {
+          row.target_pool_id = rawPool;
+          rowChanged = true;
+        }
+      } else if (typeof row.target_pool_id !== 'string') {
+        row.target_pool_id = null;
+        rowChanged = true;
+      }
+      // Worker pin and pool are mutually exclusive; pin wins.
+      if (row.target_worker_id && row.target_pool_id) {
+        row.target_pool_id = null;
+        rowChanged = true;
+      }
+      return rowChanged;
+    };
+    database.schedules.forEach((schedule) => {
+      if (normalizePlacement(schedule, schedule as unknown as Record<string, unknown>)) changed = true;
     });
     database.taskRuns.forEach((taskRun) => {
-      if (taskRun.target_worker_id !== null && typeof taskRun.target_worker_id !== 'string') {
-        taskRun.target_worker_id = null;
+      if (normalizePlacement(taskRun, taskRun as unknown as Record<string, unknown>)) changed = true;
+    });
+    database.workerPools.forEach((pool) => {
+      if (!Array.isArray(pool.worker_ids)) {
+        pool.worker_ids = [];
+        changed = true;
+      }
+      if (!Array.isArray(pool.tags)) {
+        pool.tags = [];
+        changed = true;
+      }
+      if (pool.enabled === undefined) {
+        pool.enabled = pool.status === 'enabled';
         changed = true;
       }
     });

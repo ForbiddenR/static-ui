@@ -8,7 +8,7 @@ Worker 是实际执行 Task 的执行节点：它主动通过 gRPC 双向流连�
 
 ## 快速导航
 
-[Worker 协议](#worker-protocol) · [Worker 调度](#worker-dispatch) · [Worker 管理 REST](#worker-rest-api) · [Runtime / SDK](#runtime-sdk) · [持久化映射](#persistence-map)
+[Worker 协议](#worker-protocol) · [Worker 调度](#worker-dispatch) · [Worker Pool](#worker-pool) · [Worker 管理 REST](#worker-rest-api) · [Runtime / SDK](#runtime-sdk) · [持久化映射](#persistence-map)
 
 <a id="worker-protocol"></a>
 ## Worker 控制面通信协议定稿
@@ -648,6 +648,44 @@ worker.status == online
 worker 未被 disabled
 requirements 匹配
 Master 计算的 effective_free_slots > 0
+若 Task 指定了 placement，还必须进入对应候选集合（见下）
+```
+
+### Placement：auto / Worker Pool / Worker 节点
+
+Schedule 或手动创建 Task 时可以指定 **投放目标（placement）**。投放字段在 materialize 时冻结到 Task（或静态 mock 中的 TaskRun），调度阶段只读这些字段，不回看 Schedule 的最新配置。
+
+| 模式 | 字段 | 候选集合 |
+|---|---|---|
+| Auto dispatch（自动调度） | `target_worker_id = null` 且 `target_pool_id = null` | 全部满足上表条件的 Worker |
+| Worker Pool | `target_pool_id = <pool_id>` 且 `target_worker_id = null` | 该池成员 ∩ 上表条件 |
+| Worker 节点 pin | `target_worker_id = <worker_id>` | 仅该节点（仍须满足上表条件） |
+
+优先级：
+
+```text
+1. target_worker_id 非空 → 节点 pin（忽略 target_pool_id）
+2. 否则 target_pool_id 非空 → 池内候选
+3. 否则 auto dispatch
+```
+
+说明：
+
+```text
+Worker Pool 只缩小候选集合，不覆盖节点容量
+节点 max_concurrency / effective_free_slots 仍是权威约束
+池标签（tags）用于运维分组与展示；匹配仍以成员列表 + requirements 为准
+V1 不支持嵌套池（pool-of-pools）
+```
+
+无候选时的行为：
+
+```text
+自动调度 / 池内无在线可用节点：保持 pending，写 NO_CANDIDATE_WORKER（或等价事件），按退避更新 next_dispatch_at
+节点 pin 且目标离线 / 禁用 / 无槽位：保持 pending，不自动改派到其他节点
+Schedule 触发前若目标池缺失 / 禁用 / 成员为空：ScheduleRun 记 skipped，不创建 Task
+  reason ∈ { target_pool_missing, target_pool_disabled, target_pool_empty }
+节点 pin 在 Schedule 触发时若 worker 记录不存在：ScheduleRun 记 skipped，reason = target_worker_missing
 ```
 
 Worker 排序：
@@ -660,6 +698,52 @@ effective_load = effective_used_slots / max_concurrency
 ```
 
 `stable_hash` 必须使用固定、跨进程可复现的哈希算法和明确字节串编码，禁止带随机种子的运行时 hash。同一 Task 在候选集合不变时得到稳定 Worker 顺序，同时避免单纯按 `worker_id` 形成热点。
+
+<a id="worker-pool"></a>
+## Worker Pool（工作池）
+
+> [本节角色]
+> 本节定义 Worker Pool 资源模型与管理语义。调度候选如何使用 `target_pool_id` 见 [Worker 调度](#worker-dispatch)；Schedule / Task 上的投放字段见 [Schedule 规范](Schedule调度规范.md#schedule-api) 与 [Task 规范](Task执行规范.md#task-model)。
+
+Worker Pool 是一组显式成员 Worker 的命名投放范围，用于把同类标签 / 容量画像的节点聚成可调度单元。用户可以把 Schedule 或手动运行投放到 **池** 或 **单个节点**。
+
+### 资源模型
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---:|---|
+| `id` | string | 是 | Worker Pool ID，例如 `wpool_edge` |
+| `name` | string | 是 | 展示名称 |
+| `description` | string | 否 | 说明 |
+| `tags` | array<string> | 是 | 运维标签；不替代 Worker 自身 capabilities / labels |
+| `worker_ids` | array<string> | 是 | 成员 Worker ID 列表（V1 显式成员，非自动按标签发现） |
+| `status` | string | 是 | `enabled` / `disabled` / `archived` |
+| `enabled` | boolean | 是 | 与 status 同步的便捷投影 |
+| `created_by` | string | 是 | 创建人 |
+| `created_at` | string | 是 | 创建时间 |
+| `updated_at` | string | 是 | 更新时间 |
+
+规则：
+
+```text
+同一 Worker 可属于多个池
+禁用池：禁止新的投放以该池为 target；已冻结 target_pool_id 的 pending Task 在调度时视作无候选（保持 pending）
+归档池：不得再被新的 Schedule / Task 引用
+成员变更立即影响后续调度扫描；已在其他节点 dispatching/running 的 assignment 不因成员变更回滚
+V1 不实现嵌套池、按标签自动入池、池级 max_concurrency
+```
+
+### 管理 REST（V1 草案）
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| `POST` | `/api/worker-pools` | 创建工作池 |
+| `GET` | `/api/worker-pools` | 列表 |
+| `GET` | `/api/worker-pools/{pool_id}` | 详情 |
+| `PATCH` | `/api/worker-pools/{pool_id}` | 更新名称 / 描述 / 标签 / 成员 |
+| `POST` | `/api/worker-pools/{pool_id}/enable` | 启用 |
+| `POST` | `/api/worker-pools/{pool_id}/disable` | 禁用 |
+
+创建请求至少包含 `name`；`worker_ids` / `tags` 可为空数组。未知 `worker_id` 在写入时丢弃或返回 `422 INVALID_INPUT`（实现二选一，须一致）。
 
 <a id="worker-capacity-reservation"></a>
 ### Master 容量预约与 Heartbeat 冲突裁决
@@ -959,12 +1043,14 @@ drain 语义可通过 disable + 等待 current_running 降为 0 近似实现
 | `name` | string | 是 | 展示名称 |
 | `hostname` | string | 是 | 主机名 |
 | `status` | string | 是 | WorkerStatus，见下表 |
-| `version` | string | 否 | Worker 进程版本 |
+| `version` | string | 否 | Worker **进程**版本（如 `workerd/1.4.2`）；**不是** Python 解释器版本 |
 | `session_id` | string | 否 | 当前 gRPC 连接会话 ID；offline 时可为空 |
-| `runtimes` | array<string> | 是 | 支持的 runtime，例如 `["python3.12"]` |
+| `runtimes` | array<string> | 是 | 支持的脚本 runtime，例如 `["python3.12"]`；Hello / 注册上报，**控制台只读**；用于 `requirements.runtime` 匹配；**不要**做成用户标签 |
 | `images` | array<string> | 否 | 支持的镜像标签列表 |
-| `capabilities` | array<string> | 是 | 能力标签，例如 `["selenium", "chromium"]` |
-| `labels` | object | 否 | 键值标签，例如 `{"region":"cn-east"}` |
+| `capabilities` | array<string> | 是 | 能力标签，例如 `["selenium", "chromium"]`；由 Worker 注册上报，控制台只读 |
+| `labels` | object | 否 | 键值标签，例如 `{"region":"cn-east"}`；由 Worker 注册上报，控制台只读 |
+| `system_tags` | array<string> | 是 | **系统标签**：Worker 在 Hello / 注册时上报的扁平标签视图（通常由 capabilities / labels / region 等投影），**控制台不可修改** |
+| `user_tags` | array<string> | 是 | **用户标签**：运维在管理页面维护的标签，可增删改；不得与 `system_tags` 中已有值重名 |
 | `max_concurrency` | integer | 是 | 最大并发 Task 数 |
 | `current_running` | integer | 是 | 最近 Heartbeat 上报的本地运行中 Task 数，是容量计算输入之一 |
 | `free_slots` | integer | 是 | Master 按 [容量预约与 Heartbeat 冲突裁决](#worker-capacity-reservation) 计算的 reservation-aware `effective_free_slots` 对外投影；不得直接等同于 `max_concurrency - current_running` |
@@ -986,6 +1072,42 @@ WorkerStatus：
 | `online` | gRPC 已连接且心跳正常，且未被禁用 | 是（还需 Master 计算的 `effective_free_slots > 0` 等匹配条件，见 [Worker 调度规则](Worker协议与运行时.md#worker-dispatch)） |
 | `offline` | 心跳超时或 stream 断开 | 否 |
 | `disabled` | 管理员禁止接收新 Task | 否 |
+
+标签分类：
+
+```text
+system_tags（系统标签）
+  来源：Worker Hello / 注册上报
+  控制台：只读展示
+  用途：硬件 / 区域 / 能力等不可由运维随意改写的画像
+
+user_tags（用户标签）
+  来源：管理页面 / PATCH 运维接口
+  控制台：可编辑
+  用途：业务分组、运维备注、人工归类
+  约束：写入时去重、trim；若与 system_tags 冲突则丢弃冲突项（系统优先）
+
+展示：system_tags 在前，user_tags 在后
+调度匹配：requirements 仍以 capabilities / labels / runtime 为准；
+  system_tags / user_tags 主要用于列表过滤、运维分组与展示
+```
+
+REST 运维写接口（V1）：
+
+```http
+PATCH /api/workers/{worker_id}/user-tags
+{ "user_tags": ["finance-edge", "nightly"] }
+```
+
+不得通过 REST 修改 `system_tags` / `runtimes` / `capabilities` / `labels` / `version`（只读镜像注册态）。
+
+Python 版本归属：
+
+```text
+runtimes（系统字段）     例如 python3.12 — 脚本解释器 / 运行时能力
+version（系统字段）      例如 workerd/1.4.2 — Worker 代理进程版本
+system_tags / user_tags  节点标签；不用于表达 Python 版本
+```
 
 状态来源：
 

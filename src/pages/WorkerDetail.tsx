@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState, type PointerEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent, type PointerEvent } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useI18n } from '../i18n';
 import { useDB } from '../hooks';
 import { Panel } from '../components/ui';
 import { BackLink, CapacityBar, DetailHero, Progress, StatusBadge, timeShort } from '../components/console';
-import { logsForWorker, toggleWorker } from '../store/api';
+import { logsForWorker, setWorkerUserTags, toggleWorker } from '../store/api';
 
 const TERMINAL = new Set(['success', 'partial_success', 'failed', 'canceled', 'timeout']);
 
@@ -72,6 +72,8 @@ export default function WorkerDetail() {
   const { workerId } = useParams();
   const navigate = useNavigate();
   const termRef = useRef<HTMLDivElement>(null);
+  const [editingTags, setEditingTags] = useState(false);
+  const [userTagsDraft, setUserTagsDraft] = useState('');
 
   const worker = db.workers.find((item) => item.id === workerId);
   const workerLogs = worker ? logsForWorker(worker.id) : [];
@@ -80,6 +82,11 @@ export default function WorkerDetail() {
     const el = termRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [workerLogs.length]);
+
+  useEffect(() => {
+    setEditingTags(false);
+    setUserTagsDraft(worker?.user_tags.join(', ') ?? '');
+  }, [worker?.id]);
 
   if (!worker) {
     return (
@@ -96,6 +103,9 @@ export default function WorkerDetail() {
 
   const taskRuns = db.taskRuns.filter((run) => run.worker_id === worker.id);
   const activeRuns = taskRuns.filter((run) => !TERMINAL.has(run.status));
+  const memberPools = db.workerPools.filter(
+    (pool) => pool.status !== 'archived' && pool.worker_ids.includes(worker.id),
+  );
   const freeSlots = Math.max(worker.capacity_max - worker.capacity_used, 0);
   const capacityPct = worker.capacity_max === 0
     ? 0
@@ -104,6 +114,18 @@ export default function WorkerDetail() {
 
   const metrics = db.workerMetrics[worker.id] ?? [];
   const metricTimes = metrics.map((m) => m.ts);
+
+  const beginEditTags = () => {
+    setUserTagsDraft(worker.user_tags.join(', '));
+    setEditingTags(true);
+  };
+
+  const saveUserTags = (event?: FormEvent) => {
+    event?.preventDefault();
+    const tags = userTagsDraft.split(',').map((tag) => tag.trim()).filter(Boolean);
+    setWorkerUserTags(worker.id, tags);
+    setEditingTags(false);
+  };
 
   return (
     <>
@@ -211,8 +233,36 @@ export default function WorkerDetail() {
         <Panel title={t('wkp.detail.identity')}>
           <dl className="kv detail-kv">
             <dt>ID</dt><dd className="mono">{worker.id}</dd>
-            <dt>{t('wkp.col.version')}</dt><dd className="mono">{worker.version}</dd>
+            <dt>{t('wkp.detail.agentVersion')}</dt><dd className="mono">{worker.version}</dd>
+            <dt>{t('wkp.detail.runtimes')}</dt>
+            <dd>
+              <div className="worker-tags">
+                {(worker.runtimes ?? []).length === 0
+                  ? <span className="dim">{t('wkp.detail.notags')}</span>
+                  : worker.runtimes.map((runtime) => (
+                    <span key={runtime} className="chip neon">{runtime}</span>
+                  ))}
+              </div>
+              <div className="field-hint dim">{t('wkp.detail.runtimesHint')}</div>
+            </dd>
             <dt>{t('wkp.detail.session')}</dt><dd className="mono">{worker.session_id ?? '—'}</dd>
+            <dt>{t('wkp.detail.pools')}</dt>
+            <dd>
+              {memberPools.length === 0 ? (
+                <span className="dim">{t('wkp.detail.nopools')}</span>
+              ) : (
+                memberPools.map((pool) => (
+                  <button
+                    key={pool.id}
+                    className="btn ghost sm relationship-link"
+                    type="button"
+                    onClick={() => navigate(`/worker-pools/${pool.id}`)}
+                  >
+                    {pool.name}
+                  </button>
+                ))
+              )}
+            </dd>
             <dt>{t('wkp.detail.registered')}</dt><dd className="mono">{timeShort(worker.created_at)}</dd>
           </dl>
         </Panel>
@@ -220,9 +270,52 @@ export default function WorkerDetail() {
         <Panel title={t('wkp.detail.profile')}>
           <dl className="kv detail-kv">
             <dt>{t('wkp.detail.transport')}</dt><dd><span className="chip neon">{t('wkp.grpc')}</span></dd>
-            <dt>{t('wkp.col.tags')}</dt>
-            <dd className="worker-tags">
-              {worker.tags.map((tag) => <span key={tag} className="chip violet">{tag}</span>)}
+            <dt>{t('wkp.detail.systemTags')}</dt>
+            <dd>
+              <div className="worker-tags">
+                {worker.system_tags.length === 0
+                  ? <span className="dim">{t('wkp.detail.notags')}</span>
+                  : worker.system_tags.map((tag) => (
+                    <span key={tag} className="chip neon">{tag}</span>
+                  ))}
+              </div>
+              <div className="field-hint dim">{t('wkp.detail.systemTagsHint')}</div>
+            </dd>
+            <dt>{t('wkp.detail.userTags')}</dt>
+            <dd>
+              {editingTags ? (
+                <form className="worker-user-tags-edit" onSubmit={saveUserTags}>
+                  <input
+                    value={userTagsDraft}
+                    onChange={(event) => setUserTagsDraft(event.target.value)}
+                    placeholder={t('wkp.detail.userTagsPlaceholder')}
+                    aria-label={t('wkp.detail.userTags')}
+                    autoFocus
+                  />
+                  <div className="worker-user-tags-actions">
+                    <button className="btn sm" type="submit">{t('wkp.detail.userTagsSave')}</button>
+                    <button className="btn ghost sm" type="button" onClick={() => setEditingTags(false)}>
+                      {t('wkp.detail.userTagsCancel')}
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <>
+                  <div className="worker-tags">
+                    {worker.user_tags.length === 0
+                      ? <span className="dim">{t('wkp.detail.notags')}</span>
+                      : worker.user_tags.map((tag) => (
+                        <span key={tag} className="chip violet">{tag}</span>
+                      ))}
+                  </div>
+                  <div className="worker-user-tags-actions">
+                    <button className="btn ghost sm" type="button" onClick={beginEditTags}>
+                      {t('wkp.detail.userTagsEdit')}
+                    </button>
+                  </div>
+                </>
+              )}
+              <div className="field-hint dim">{t('wkp.detail.userTagsHint')}</div>
             </dd>
             <dt>{t('wkp.detail.admission')}</dt>
             <dd>

@@ -661,7 +661,9 @@ GET /api/tasks/{task_id}        -> TaskDetail，完整详情
 | `source_task_id` | string | 否 | 来源 Task ID；重试、重新执行时填写 |
 | `schedule_id` | string | 否 | 来源 Schedule ID；手动/API 创建为空 |
 | `schedule_run_id` | string | 否 | 来源 ScheduleRun ID |
-| `worker_id` | string | 否 | 当前或最后执行该 Task 的 Worker ID |
+| `target_pool_id` | string | 否 | 投放工作池；与 `target_worker_id` 互斥，节点 pin 优先；创建时冻结 |
+| `target_worker_id` | string | 否 | 投放指定 Worker 节点；非空时忽略 `target_pool_id`；创建时冻结 |
+| `worker_id` | string | 否 | 当前或最后执行该 Task 的 Worker ID（实际派发结果，不是投放意图） |
 | `assignment_id` | string | 否 | 本次派发 ID，用于 Worker 上报 fencing |
 | `run_type` | string | 是 | 运行类型，见 [run_type](#task-run-type) |
 | `status` | string | 是 | TaskStatus |

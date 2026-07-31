@@ -10,21 +10,29 @@ export function tickTaskRun(taskRunId: string): void {
   if (!taskRun || TERMINAL.has(taskRun.status)) return;
 
   if (taskRun.status === 'pending') {
-    // Appointed pin wins when present; otherwise auto-dispatch among eligible online nodes.
-    const eligible = db.workers.filter((w) => w.status === 'online' && w.enabled && w.capacity_used < w.capacity_max);
-    const candidate = taskRun.target_worker_id
-      ? eligible.find((w) => w.id === taskRun.target_worker_id)
-      : eligible.length > 0
-        ? eligible[Math.floor(Math.random() * eligible.length)]
-        : undefined;
+    // Worker pin > pool membership > all eligible online nodes.
+    const online = db.workers.filter((w) => w.status === 'online' && w.enabled && w.capacity_used < w.capacity_max);
+    let eligible = online;
+    let placeNote = ' (auto dispatch)';
+    if (taskRun.target_worker_id) {
+      eligible = online.filter((w) => w.id === taskRun.target_worker_id);
+      placeNote = ' (target worker appointed)';
+    } else if (taskRun.target_pool_id) {
+      const pool = db.workerPools.find((item) => item.id === taskRun.target_pool_id);
+      const memberIds = new Set(pool?.worker_ids ?? []);
+      eligible = online.filter((w) => memberIds.has(w.id));
+      placeNote = ` (target pool ${pool?.name ?? taskRun.target_pool_id})`;
+    }
+    const candidate = eligible.length > 0
+      ? eligible[Math.floor(Math.random() * eligible.length)]
+      : undefined;
     if (!candidate) return;
     taskRun.status = 'dispatching';
     taskRun.worker_id = candidate.id;
     candidate.capacity_used += 1;
     candidate.current_task_run_ids.push(taskRun.id);
     candidate.last_heartbeat_at = now();
-    const pinNote = taskRun.target_worker_id ? ' (target worker appointed)' : ' (auto dispatch)';
-    emitHelpers.log(taskRun.id, 'info', 'master', `capacity reserved on ${candidate.name}${pinNote}; AssignTask sent (session=${candidate.session_id})`);
+    emitHelpers.log(taskRun.id, 'info', 'master', `capacity reserved on ${candidate.name}${placeNote}; AssignTask sent (session=${candidate.session_id})`);
     emitHelpers.workerLog(
       candidate.id,
       'info',

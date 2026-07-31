@@ -4,6 +4,7 @@ import { useI18n } from '../i18n';
 import { useDB } from '../hooks';
 import { Panel } from '../components/ui';
 import { BackLink, DetailHero, StatusBadge, timeShort } from '../components/console';
+import { formatPlacementLabel } from '../components/PlacementSelect';
 import { cancelTaskRun, logsForTaskRun, retryTaskRun, rerunTaskRun } from '../store/api';
 
 const TERMINAL = new Set(['success', 'partial_success', 'failed', 'canceled', 'timeout']);
@@ -43,6 +44,17 @@ export default function TaskRunDetail() {
   const done = stats.completed ?? stats.success + stats.failed + stats.skipped + (stats.timeout ?? 0) + (stats.canceled ?? 0);
   const pct = stats.total === 0 ? 100 : Math.round((done / stats.total) * 100);
   const worker = taskRun.worker_id ? db.workers.find((item) => item.id === taskRun.worker_id) : undefined;
+  const targetWorker = taskRun.target_worker_id
+    ? db.workers.find((item) => item.id === taskRun.target_worker_id)
+    : undefined;
+  const targetPool = taskRun.target_pool_id
+    ? db.workerPools.find((item) => item.id === taskRun.target_pool_id)
+    : undefined;
+  const placementLabel = formatPlacementLabel(taskRun, {
+    workers: db.workers,
+    pools: db.workerPools,
+    autoLabel: t('place.auto'),
+  });
   const snapshot = taskRun.bot_snapshot;
   const task = db.tasks.find((item) => item.id === taskRun.task_id);
   const schedule = taskRun.schedule_id ? db.schedules.find((item) => item.id === taskRun.schedule_id) : undefined;
@@ -175,6 +187,20 @@ export default function TaskRunDetail() {
                 </dd>
               </>
             )}
+            <dt>{t('place.label')}</dt>
+            <dd>
+              {targetWorker ? (
+                <button className="btn ghost sm relationship-link" type="button" onClick={() => navigate(`/workers/${targetWorker.id}`)}>
+                  {targetWorker.name}
+                </button>
+              ) : targetPool ? (
+                <button className="btn ghost sm relationship-link" type="button" onClick={() => navigate(`/worker-pools/${targetPool.id}`)}>
+                  {targetPool.name}
+                </button>
+              ) : (
+                <span className="chip violet">{placementLabel}</span>
+              )}
+            </dd>
             <dt>{t('tasks.detail.worker')}</dt>
             <dd>
               {worker ? (
