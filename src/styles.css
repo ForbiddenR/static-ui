@@ -1182,6 +1182,7 @@ table.data td.schedule-actions-col {
 .worker-signal-stat { display: flex; flex-direction: column; justify-content: space-between; }
 .worker-stat-signal { min-height: 42px; display: flex; align-items: center; }
 .worker-tags { display: flex; gap: 2px; flex-wrap: wrap; align-items: center; }
+.field-hint.amber { color: var(--amber); }
 .field-hint {
   margin-top: 6px;
   font-family: var(--font-mono);

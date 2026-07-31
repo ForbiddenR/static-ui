@@ -21,7 +21,7 @@ identifiers.
   session and heartbeat metadata, assigned TaskRun drilldown,
   capacity-aware mock dispatch, live per-node telemetry sparklines (CPU / memory / throughput /
   heartbeat RTT with hover scrubbing), and a streaming worker log (session, dispatch, heartbeat, and runtime events).
-- **Worker Pools** (`/worker-pools`) — named placement groups with shared tags and explicit member workers. Schedules and manual runs can target a pool; dispatch stays among online, enabled members with free capacity. Node capacity remains authoritative.
+- **Worker Pools** (`/worker-pools`) — named placement groups with optional **intent tags** (filter / suggest members only; empty allowed) and explicit `worker_ids` membership. Schedules and manual runs can target a pool; dispatch stays among online, enabled members with free capacity. Tags never auto-join workers; node capacity remains authoritative.
 - **Full-page detail views** — Job Definitions, tasks, task runs, schedules, schedule runs, workers, and worker pools open dedicated routes
   with a corner-bracketed HUD hero, terminal-style `cd ..` back link, live stat strip, and
   cross-linked related records.

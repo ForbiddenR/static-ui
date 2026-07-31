@@ -2,7 +2,7 @@
 // Task = reusable template under a Job Definition.
 // TaskRun = live execution; Schedule binds a Task and materializes TaskRuns.
 import {
-  db, emitHelpers, now, refreshScheduleTimes, uid,
+  db, emitHelpers, normalizeTags, now, refreshScheduleTimes, uid,
   type Bot, type BotSnapshot, type BotVersion, type InputSource, type JsonObject,
   type Schedule, type ScheduleRun, type ScheduleRunTriggerType,
   type Task, type TaskRun, type TaskRunType, type TaskItemStatus,
@@ -918,7 +918,7 @@ export function createWorkerPool(input: CreateWorkerPoolInput): WorkerPool | nul
     id: uid('wpool'),
     name,
     description: input.description?.trim() || null,
-    tags: (input.tags ?? []).map((tag) => tag.trim()).filter(Boolean),
+    tags: normalizeTags(input.tags),
     worker_ids: workerIds,
     status: enabled ? 'enabled' : 'disabled',
     enabled,
@@ -964,8 +964,9 @@ export function updateWorkerPool(
   if (patch.description !== undefined) {
     pool.description = patch.description?.trim() || null;
   }
-  if (patch.tags) {
-    pool.tags = patch.tags.map((tag) => tag.trim()).filter(Boolean);
+  // Allow clearing tags with [] — membership is never derived from tags.
+  if (patch.tags !== undefined) {
+    pool.tags = normalizeTags(patch.tags);
   }
   pool.updated_at = now();
   emitHelpers.emit();

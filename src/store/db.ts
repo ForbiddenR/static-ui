@@ -117,7 +117,11 @@ export function workerAllTags(worker: { system_tags?: string[]; user_tags?: stri
   // Legacy single-list rows before schema 8.
   return Array.isArray(worker.tags) ? worker.tags : [];
 }
-/** Named placement group of interchangeable worker nodes (shared tags / capacity profile). */
+/**
+ * Named placement group of interchangeable worker nodes.
+ * tags = optional operator intent labels (filter / suggest / display only).
+ * Membership is always worker_ids — tags never auto-join or auto-leave workers.
+ */
 export interface WorkerPool {
   id: string;
   name: string;
@@ -129,6 +133,26 @@ export interface WorkerPool {
   created_by: string;
   created_at: string;
   updated_at: string;
+}
+
+/** Normalize free-form pool/operator tags: trim, drop empties, dedupe (first wins). */
+export function normalizeTags(tags: string[] | undefined | null): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of tags ?? []) {
+    const tag = String(raw).trim();
+    if (!tag || seen.has(tag)) continue;
+    seen.add(tag);
+    out.push(tag);
+  }
+  return out;
+}
+
+/** True when worker system/user tags share at least one value with poolTags. */
+export function workerMatchesPoolTags(worker: Worker, poolTags: string[]): boolean {
+  if (poolTags.length === 0) return false;
+  const pool = new Set(poolTags);
+  return workerAllTags(worker).some((tag) => pool.has(tag));
 }
 export interface WorkerMetricPoint { ts: string; cpu_pct: number; mem_pct: number; items_per_min: number; rtt_ms: number; }
 export interface WorkerLogEntry { id: string; worker_id: string; seq: number; level: 'debug' | 'info' | 'warning' | 'error'; source: 'heartbeat' | 'dispatch' | 'runtime' | 'session' | 'master'; message: string; created_at: string; }

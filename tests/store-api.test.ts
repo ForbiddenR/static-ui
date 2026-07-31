@@ -673,6 +673,41 @@ describe('Worker pool contracts', () => {
     expect(createWorkerPool({ name: '   ' })).toBeNull();
   });
 
+  it('treats pool tags as optional intent labels and never derives membership from them', async () => {
+    const {
+      createWorkerPool, db, normalizeTags, updateWorkerPool, workerMatchesPoolTags,
+    } = await loadStore();
+
+    expect(normalizeTags([' edge ', '', 'gpu', 'edge', '  finance '])).toEqual(['edge', 'gpu', 'finance']);
+
+    const empty = createWorkerPool({ name: 'Scratch', tags: [] })!;
+    expect(empty.tags).toEqual([]);
+    expect(empty.worker_ids).toEqual([]);
+
+    const messy = createWorkerPool({
+      name: 'GPU edge',
+      tags: [' gpu ', 'edge', 'gpu', ''],
+      worker_ids: ['worker_edge_01'],
+    })!;
+    expect(messy.tags).toEqual(['gpu', 'edge']);
+    expect(messy.worker_ids).toEqual(['worker_edge_01']);
+
+    // Soft match: intersection with worker system/user tags; no auto membership change.
+    const edge = db.workers.find((item) => item.id === 'worker_edge_01')!;
+    const batch = db.workers.find((item) => item.id === 'worker_batch_01')!;
+    expect(workerMatchesPoolTags(edge, messy.tags)).toBe(true);
+    expect(workerMatchesPoolTags(batch, messy.tags)).toBe(false);
+    expect(workerMatchesPoolTags(edge, [])).toBe(false);
+
+    expect(updateWorkerPool(messy.id, { tags: [] })).toBe(true);
+    expect(messy.tags).toEqual([]);
+    expect(messy.worker_ids).toEqual(['worker_edge_01']);
+
+    expect(updateWorkerPool(messy.id, { tags: [' night ', 'night', 'batch'] })).toBe(true);
+    expect(messy.tags).toEqual(['night', 'batch']);
+    expect(messy.worker_ids).toEqual(['worker_edge_01']);
+  });
+
   it('dispatches pool-targeted TaskRuns only to pool members', async () => {
     const { createTask, db, runTask, tickTask } = await loadStore();
     const task = createTask({

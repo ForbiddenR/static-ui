@@ -714,8 +714,8 @@ Worker Pool 是一组显式成员 Worker 的命名投放范围，用于把同类
 | `id` | string | 是 | Worker Pool ID，例如 `wpool_edge` |
 | `name` | string | 是 | 展示名称 |
 | `description` | string | 否 | 说明 |
-| `tags` | array<string> | 是 | 运维标签；不替代 Worker 自身 capabilities / labels |
-| `worker_ids` | array<string> | 是 | 成员 Worker ID 列表（V1 显式成员，非自动按标签发现） |
+| `tags` | array<string> | 是 | **池意图标签**（运维可空）：用于列表过滤、展示与成员推荐；**不**替代 Worker `system_tags` / `user_tags` / `runtimes`，**不**参与 requirements 匹配，**不**自动入池/出池 |
+| `worker_ids` | array<string> | 是 | 成员 Worker ID 列表（V1 **唯一**权威成员关系；非自动按标签发现） |
 | `status` | string | 是 | `enabled` / `disabled` / `archived` |
 | `enabled` | boolean | 是 | 与 status 同步的便捷投影 |
 | `created_by` | string | 是 | 创建人 |
@@ -730,6 +730,13 @@ Worker Pool 是一组显式成员 Worker 的命名投放范围，用于把同类
 归档池：不得再被新的 Schedule / Task 引用
 成员变更立即影响后续调度扫描；已在其他节点 dispatching/running 的 assignment 不因成员变更回滚
 V1 不实现嵌套池、按标签自动入池、池级 max_concurrency
+
+池标签（tags）语义：
+  - 可选；空数组合法（临时池 / 未分类池）
+  - 写入时 trim、去空、去重
+  - 仅表示运维意图（如 edge / gpu / finance），与 Worker 标签可同名，但是约定而非外键
+  - 控制台可按「池 tags ∩ Worker(system_tags ∪ user_tags)」软推荐 / 软提示成员
+  - 改 tags 不得改写 worker_ids；调度候选仍只看 worker_ids
 ```
 
 ### 管理 REST（V1 草案）
