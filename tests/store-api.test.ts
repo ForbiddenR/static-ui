@@ -95,6 +95,38 @@ describe('Job Definition Version and Task template contracts', () => {
     expect(taskRun.entrypoint).toBe(frozen.entrypoint);
   });
 
+  it('accepts an appointed target worker on manual runTask', async () => {
+    const { createTask, runTask } = await loadStore();
+    const task = createTask({
+      bot_id: 'bot_invoice_sync',
+      name: 'Manual pin',
+      input_source: 'params',
+      input_params: {},
+    })!;
+    const taskRun = runTask(task.id, { target_worker_id: 'worker_edge_02' })!;
+    expect(taskRun).toMatchObject({
+      task_id: task.id,
+      run_type: 'manual',
+      target_worker_id: 'worker_edge_02',
+      worker_id: null,
+    });
+    expect(runTask(task.id, { target_worker_id: 'worker_missing' })).toBeNull();
+  });
+
+  it('accepts auto dispatch (null target) on manual runTask', async () => {
+    const { createTask, runTask } = await loadStore();
+    const task = createTask({
+      bot_id: 'bot_invoice_sync',
+      name: 'Auto dispatch pin',
+      input_source: 'params',
+      input_params: {},
+    })!;
+    const byNull = runTask(task.id, { target_worker_id: null })!;
+    const byToken = runTask(task.id, { target_worker_id: 'auto' })!;
+    expect(byNull.target_worker_id).toBeNull();
+    expect(byToken.target_worker_id).toBeNull();
+  });
+
   it('inherits executable defaults when a new version omits replacements', async () => {
     const { createJobDefinition, createJobDefinitionVersion } = await loadStore();
     const definition = createJobDefinition({
@@ -174,10 +206,12 @@ describe('Schedule decision contracts', () => {
       name: 'Contract schedule',
       cron: '7 * * * *',
       timezone: 'UTC',
+      target_worker_id: 'worker_edge_01',
       enabled: true,
     });
     expect(schedule?.task_id).toBe(task.id);
     expect(schedule?.bot_id).toBe(definition.id);
+    expect(schedule?.target_worker_id).toBe('worker_edge_01');
 
     const firstRun = triggerSchedule(schedule!.id)!;
     const firstTaskRun = db.taskRuns.find((item) => item.id === firstRun.task_run_id)!;
@@ -188,6 +222,7 @@ describe('Schedule decision contracts', () => {
       schedule_id: schedule!.id,
       schedule_run_id: firstRun.id,
       run_type: 'schedule',
+      target_worker_id: 'worker_edge_01',
       input_params: { window: 'today' },
       config: { retries: 2 },
       requirements: { region: 'east' },
@@ -227,12 +262,67 @@ describe('Schedule decision contracts', () => {
       name: 'Disabled task schedule',
       cron: '0 * * * *',
       timezone: 'UTC',
+      target_worker_id: 'worker_edge_01',
       enabled: true,
     })!;
     const run = triggerSchedule(schedule!.id)!;
 
     expect(run).toMatchObject({ status: 'skipped', reason: 'task_disabled', task_id: task.id, task_run_id: null });
     expect(db.taskRuns.some((item) => item.schedule_run_id === run.id)).toBe(false);
+  });
+
+  it('pins the appointed target worker onto scheduled TaskRuns', async () => {
+    const { createTask, createSchedule, db, triggerSchedule, toggleJobDefinition } = await loadStore();
+    const definition = db.bots.find((item) => item.id === 'bot_invoice_sync')!;
+    if (definition.status !== 'enabled') expect(toggleJobDefinition(definition.id).ok).toBe(true);
+
+    const task = createTask({
+      bot_id: definition.id,
+      name: 'Pinned worker task',
+      input_source: 'params',
+      input_params: {},
+    })!;
+    const schedule = await createSchedule({
+      task_id: task.id,
+      name: 'Pinned worker schedule',
+      cron: '15 * * * *',
+      timezone: 'UTC',
+      target_worker_id: 'worker_edge_02',
+      enabled: true,
+    });
+    expect(schedule?.target_worker_id).toBe('worker_edge_02');
+
+    const run = triggerSchedule(schedule!.id)!;
+    const taskRun = db.taskRuns.find((item) => item.id === run.task_run_id)!;
+    expect(run.status).toBe('task_created');
+    expect(taskRun.target_worker_id).toBe('worker_edge_02');
+  });
+
+  it('stores auto dispatch when schedule target is null', async () => {
+    const { createTask, createSchedule, db, triggerSchedule, toggleJobDefinition } = await loadStore();
+    const definition = db.bots.find((item) => item.id === 'bot_invoice_sync')!;
+    if (definition.status !== 'enabled') expect(toggleJobDefinition(definition.id).ok).toBe(true);
+
+    const task = createTask({
+      bot_id: definition.id,
+      name: 'Auto dispatch task',
+      input_source: 'params',
+      input_params: {},
+    })!;
+    const schedule = await createSchedule({
+      task_id: task.id,
+      name: 'Auto dispatch schedule',
+      cron: '20 * * * *',
+      timezone: 'UTC',
+      target_worker_id: 'auto',
+      enabled: true,
+    });
+    expect(schedule?.target_worker_id).toBeNull();
+
+    const run = triggerSchedule(schedule!.id)!;
+    const taskRun = db.taskRuns.find((item) => item.id === run.task_run_id)!;
+    expect(run.status).toBe('task_created');
+    expect(taskRun.target_worker_id).toBeNull();
   });
 
   it('links a TaskRun only for task_created decisions', async () => {

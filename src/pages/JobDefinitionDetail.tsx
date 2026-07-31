@@ -37,6 +37,7 @@ export default function JobDefinitionDetail() {
   const [publish, setPublish] = useState(true);
   const [err, setErr] = useState('');
   const [flash, setFlash] = useState('');
+  const [runWorkerId, setRunWorkerId] = useState('');
 
   const jobDefinition = db.bots.find((candidate) => candidate.id === jobDefinitionId);
 
@@ -106,10 +107,14 @@ export default function JobDefinitionDetail() {
     }
   };
 
-  // One-shot: ensure a default template exists, then run it as a TaskRun.
+  // One-shot: ensure a default template exists, then run it as a TaskRun on the appointed worker.
   const run = () => {
     if (!versionResolution.ok) {
       showFlash(t('jobDefinitions.err.runRejected'));
+      return;
+    }
+    if (!runWorkerId) {
+      showFlash(t('tasks.err.worker'));
       return;
     }
     let template = tasks.find((task) => task.status === 'enabled' && !task.bot_version_id)
@@ -128,7 +133,8 @@ export default function JobDefinitionDetail() {
       showFlash(t('jobDefinitions.err.runRejected'));
       return;
     }
-    const taskRun = runTask(template.id);
+    const target = runWorkerId === 'auto' ? null : runWorkerId;
+    const taskRun = runTask(template.id, { target_worker_id: target });
     if (taskRun) navigate(`/task-runs/${taskRun.id}`);
     else showFlash(t('jobDefinitions.err.runRejected'));
   };
@@ -151,12 +157,30 @@ export default function JobDefinitionDetail() {
           <BackLink to="/job-definitions" label={t('jobDefinitions.detail.back')} />
           {flash && <span className="chip red">{flash}</span>}
         </div>
-        <div className="left">
+        <div className="left run-target-ctl">
+          <label className="run-target-label" htmlFor="job-run-worker">
+            {t('tasks.f.worker')}
+          </label>
+          <select
+            id="job-run-worker"
+            value={runWorkerId}
+            disabled={!runnable}
+            onChange={(event) => setRunWorkerId(event.target.value)}
+            aria-label={t('tasks.f.worker')}
+          >
+            <option value="">{t('tasks.f.worker.pick')}</option>
+            <option value="auto">{t('tasks.f.worker.auto')}</option>
+            {db.workers.map((worker) => (
+              <option key={worker.id} value={worker.id}>
+                {worker.name} // {worker.status} // {worker.capacity_used}/{worker.capacity_max}
+              </option>
+            ))}
+          </select>
           <button
             className="btn sm"
             type="button"
             onClick={run}
-            disabled={!runnable}
+            disabled={!runnable || !runWorkerId}
             title={versionResolution.ok && versionResolution.version.default_input_source === 'file'
               ? t('jobDefinitions.run.fileRequired')
               : undefined}

@@ -814,6 +814,78 @@ table.data tbody tr.no-click { cursor: default; }
   margin: 0;
   gap: 8px 14px;
 }
+.schedule-worker-appoint {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.schedule-worker-appoint select {
+  min-width: 0;
+  flex: 1 1 180px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 7px 10px;
+  outline: none;
+}
+.schedule-worker-appoint select:focus {
+  border-color: var(--border-neon);
+  box-shadow: var(--shadow-glow);
+}
+
+/* Compact run dispatch group: label + worker pin + run button (+ optional status toggle). */
+.run-target-ctl {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 12px;
+  margin-left: auto;
+  padding: 6px 10px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  box-shadow: inset 2px 0 0 var(--magenta);
+  clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%);
+}
+.run-target-label {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+.run-target-ctl select {
+  min-width: 200px;
+  max-width: min(320px, 42vw);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 6px 10px;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  clip-path: polygon(6px 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%, 0 6px);
+}
+.run-target-ctl select:hover:not(:disabled) {
+  border-color: var(--border-neon);
+}
+.run-target-ctl select:focus {
+  border-color: var(--border-neon);
+  box-shadow: var(--shadow-glow);
+}
+.run-target-ctl select:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.run-target-ctl .admission-ctl {
+  margin-left: 4px;
+  padding-left: 12px;
+  border-left: 1px solid var(--border);
+}
 .detail-stats {
   grid-template-columns: minmax(300px, 2fr) repeat(3, minmax(140px, 1fr));
   align-items: stretch;
@@ -929,6 +1001,15 @@ table.data tbody tr.no-click { cursor: default; }
   .detail-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .stat.stat-wide { grid-column: 1 / -1; }
   .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .run-target-ctl {
+    margin-left: 0;
+    width: 100%;
+    justify-content: flex-start;
+  }
+  .run-target-ctl select {
+    flex: 1 1 180px;
+    max-width: none;
+  }
 }
 @media (max-width: 600px) {
   .detail-stats { grid-template-columns: 1fr; }
@@ -937,6 +1018,21 @@ table.data tbody tr.no-click { cursor: default; }
   .detail-kv { grid-template-columns: 1fr; gap: 2px; }
   .detail-kv dt { margin-top: 8px; }
   .metric-grid { grid-template-columns: 1fr; }
+  .run-target-ctl {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    clip-path: none;
+  }
+  .run-target-ctl select { width: 100%; min-width: 0; }
+  .run-target-ctl .btn { width: 100%; }
+  .run-target-ctl .admission-ctl {
+    margin-left: 0;
+    padding-left: 0;
+    border-left: none;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+  }
 }
 
 .kv { display: grid; grid-template-columns: 150px 1fr; gap: 4px 14px; font-size: 13px; margin: 14px 0; }

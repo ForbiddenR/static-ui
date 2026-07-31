@@ -10,16 +10,21 @@ export function tickTaskRun(taskRunId: string): void {
   if (!taskRun || TERMINAL.has(taskRun.status)) return;
 
   if (taskRun.status === 'pending') {
-    const candidate = db.workers
-      .filter((w) => w.status === 'online' && w.enabled && w.capacity_used < w.capacity_max)
-      .sort((a, b) => a.capacity_used - b.capacity_used)[0];
+    // Appointed pin wins when present; otherwise auto-dispatch among eligible online nodes.
+    const eligible = db.workers.filter((w) => w.status === 'online' && w.enabled && w.capacity_used < w.capacity_max);
+    const candidate = taskRun.target_worker_id
+      ? eligible.find((w) => w.id === taskRun.target_worker_id)
+      : eligible.length > 0
+        ? eligible[Math.floor(Math.random() * eligible.length)]
+        : undefined;
     if (!candidate) return;
     taskRun.status = 'dispatching';
     taskRun.worker_id = candidate.id;
     candidate.capacity_used += 1;
     candidate.current_task_run_ids.push(taskRun.id);
     candidate.last_heartbeat_at = now();
-    emitHelpers.log(taskRun.id, 'info', 'master', `capacity reserved on ${candidate.name}; AssignTask sent (session=${candidate.session_id})`);
+    const pinNote = taskRun.target_worker_id ? ' (target worker appointed)' : ' (auto dispatch)';
+    emitHelpers.log(taskRun.id, 'info', 'master', `capacity reserved on ${candidate.name}${pinNote}; AssignTask sent (session=${candidate.session_id})`);
     emitHelpers.workerLog(
       candidate.id,
       'info',

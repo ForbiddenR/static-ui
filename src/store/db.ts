@@ -48,6 +48,8 @@ export interface TaskRun {
   schedule_id: string | null; schedule_run_id: string | null; source_task_run_id: string | null;
   status: TaskStatus; run_type: TaskRunType; input_source: InputSource; input_file_id: string | null; input_params: JsonObject;
   config: JsonObject; requirements: JsonObject; priority: number; entrypoint: string; statistics: TaskStatistics; items: TaskItem[];
+  /** Preferred worker for dispatch (from Schedule appointment or explicit run pin). */
+  target_worker_id: string | null;
   worker_id: string | null; error_code: string | null; created_at: string; updated_at: string; finished_at: string | null;
 }
 
@@ -56,6 +58,8 @@ export type ScheduleOverlapPolicy = 'skip'; export type ScheduleMissedRunPolicy 
 export interface Schedule {
   id: string; task_id: string; bot_id: string; bot_code: string; name: string; description: string | null;
   cron: string; timezone: string;
+  /** Worker appointed for every TaskRun; null = auto-dispatch among eligible workers. */
+  target_worker_id: string | null;
   /** status is authoritative; enabled remains for old screens. */ status: 'enabled' | 'disabled' | 'archived'; enabled: boolean;
   overlap_policy: ScheduleOverlapPolicy; missed_run_policy: ScheduleMissedRunPolicy; jitter_seconds: number; max_parallel_runs: number;
   last_run_at: string | null; last_task_run_id: string | null; next_planned_at: string | null; next_run_at: string | null;
@@ -263,14 +267,14 @@ function seed(): DB {
     schedule_id: null, schedule_run_id: null, source_task_run_id: null, status, run_type: 'manual',
     input_source: task.input_source, input_file_id: task.input_file_id, input_params: { ...task.input_params },
     config: { ...task.config }, requirements: { ...task.requirements }, priority: task.priority, entrypoint: 'main.py',
-    statistics: stats(items), items, worker_id: null, error_code: null, created_at: ts, updated_at: ts,
+    statistics: stats(items), items, target_worker_id: null, worker_id: null, error_code: null, created_at: ts, updated_at: ts,
     finished_at: status === 'running' ? null : ts, ...extra,
   });
 
   const taskRuns: TaskRun[] = [
     taskRun('trun_9f2c01', tasks[0], botA, 'bv_inv_3', successful, 'success', {
       run_type: 'schedule', schedule_id: 'sch_nightly_inv', schedule_run_id: 'srun_1',
-      input_params: { window: '2026-07-20' }, worker_id: 'worker_edge_01',
+      input_params: { window: '2026-07-20' }, target_worker_id: 'worker_edge_01', worker_id: 'worker_edge_01',
     }),
     taskRun('trun_7ab3d4', tasks[1], botB, 'bv_prc_2', partial, 'partial_success', {
       input_params: { category: 'gpu' }, worker_id: 'worker_edge_02',
@@ -283,13 +287,15 @@ function seed(): DB {
   const schedules: Schedule[] = [
     {
       id: 'sch_nightly_inv', task_id: 'task_nightly_inv', bot_id: botA.id, bot_code: botA.code, name: 'Nightly invoice sync', description: null,
-      cron: '0 2 * * *', timezone: 'Asia/Shanghai', status: 'enabled', enabled: true, overlap_policy: 'skip', missed_run_policy: 'skip',
+      cron: '0 2 * * *', timezone: 'Asia/Shanghai', target_worker_id: 'worker_edge_01',
+      status: 'enabled', enabled: true, overlap_policy: 'skip', missed_run_policy: 'skip',
       jitter_seconds: 300, max_parallel_runs: 1, last_run_at: ts, last_task_run_id: 'trun_9f2c01', next_planned_at: null, next_run_at: null,
       created_by: 'user_demo', created_at: ts, updated_at: ts, archived_at: null,
     },
     {
       id: 'sch_hourly_price', task_id: 'task_price_all', bot_id: botB.id, bot_code: botB.code, name: 'Hourly price sweep', description: null,
-      cron: '7 * * * *', timezone: 'UTC', status: 'disabled', enabled: false, overlap_policy: 'skip', missed_run_policy: 'run_once',
+      cron: '7 * * * *', timezone: 'UTC', target_worker_id: 'worker_edge_02',
+      status: 'disabled', enabled: false, overlap_policy: 'skip', missed_run_policy: 'run_once',
       jitter_seconds: 60, max_parallel_runs: 1, last_run_at: null, last_task_run_id: null, next_planned_at: null, next_run_at: null,
       created_by: 'user_demo', created_at: ts, updated_at: ts, archived_at: null,
     },
@@ -370,6 +376,7 @@ function migratePersistedDB(value: unknown): { db: DB; changed: boolean } | null
     && Object.values(parsed.workerMetrics).every(hasRecords)
   ) {
     const database = parsed as DB;
+    let changed = false;
     // Normalize worker assignment field name if a partial write left a gap.
     database.workers.forEach((worker) => {
       const raw = worker as unknown as Record<string, unknown>;
@@ -377,15 +384,36 @@ function migratePersistedDB(value: unknown): { db: DB; changed: boolean } | null
         worker.current_task_run_ids = Array.isArray(raw.current_task_ids)
           ? (raw.current_task_ids as string[])
           : [];
+        changed = true;
       }
     });
     database.logs.forEach((entry) => {
       const raw = entry as unknown as Record<string, unknown>;
       if (typeof entry.task_run_id !== 'string' && typeof raw.task_id === 'string') {
         entry.task_run_id = raw.task_id as string;
+        changed = true;
       }
     });
-    return { db: database, changed: reconcileLinks(database) };
+    // Normalize target_worker_id: string pin, or null for auto dispatch.
+    database.schedules.forEach((schedule) => {
+      const raw = schedule as unknown as Record<string, unknown>;
+      if (raw.target_worker_id === null || raw.target_worker_id === '' || raw.target_worker_id === 'auto' || raw.target_worker_id === 'random') {
+        if (schedule.target_worker_id !== null) {
+          schedule.target_worker_id = null;
+          changed = true;
+        }
+      } else if (typeof schedule.target_worker_id !== 'string') {
+        schedule.target_worker_id = typeof raw.target_worker_id === 'string' ? raw.target_worker_id : null;
+        changed = true;
+      }
+    });
+    database.taskRuns.forEach((taskRun) => {
+      if (taskRun.target_worker_id !== null && typeof taskRun.target_worker_id !== 'string') {
+        taskRun.target_worker_id = null;
+        changed = true;
+      }
+    });
+    return { db: database, changed: reconcileLinks(database) || changed };
   }
 
   // Older mock schemas are reseeds — the hierarchy rewrite is not lossless.

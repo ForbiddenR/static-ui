@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useI18n } from '../i18n';
 import { useDB } from '../hooks';
@@ -16,6 +17,8 @@ export default function TaskDetail() {
   const db = useDB();
   const { taskId } = useParams();
   const navigate = useNavigate();
+  const [workerId, setWorkerId] = useState('');
+  const [runErr, setRunErr] = useState('');
 
   const task = db.tasks.find((item) => item.id === taskId);
   if (!task) {
@@ -41,8 +44,15 @@ export default function TaskDetail() {
     && db.bots.find((bot) => bot.id === task.bot_id)?.status === 'enabled';
 
   const run = () => {
-    const taskRun = runTask(task.id);
+    if (!workerId) {
+      setRunErr(t('tasks.err.worker'));
+      return;
+    }
+    setRunErr('');
+    const target = workerId === 'auto' ? null : workerId;
+    const taskRun = runTask(task.id, { target_worker_id: target });
     if (taskRun) navigate(`/task-runs/${taskRun.id}`);
+    else setRunErr(t('tasks.err.run'));
   };
 
   return (
@@ -50,9 +60,31 @@ export default function TaskDetail() {
       <div className="toolbar detail-toolbar">
         <div className="left">
           <BackLink to="/tasks" label={t('tasks.detail.back')} />
+          {runErr && <span className="chip amber">{runErr}</span>}
         </div>
-        <div className="left">
-          <button className="btn sm" type="button" onClick={run} disabled={!canRun}>
+        <div className="left run-target-ctl">
+          <label className="run-target-label" htmlFor="task-run-worker">
+            {t('tasks.f.worker')}
+          </label>
+          <select
+            id="task-run-worker"
+            value={workerId}
+            disabled={!canRun}
+            onChange={(event) => {
+              setWorkerId(event.target.value);
+              if (runErr) setRunErr('');
+            }}
+            aria-label={t('tasks.f.worker')}
+          >
+            <option value="">{t('tasks.f.worker.pick')}</option>
+            <option value="auto">{t('tasks.f.worker.auto')}</option>
+            {db.workers.map((worker) => (
+              <option key={worker.id} value={worker.id}>
+                {worker.name} // {worker.status} // {worker.capacity_used}/{worker.capacity_max}
+              </option>
+            ))}
+          </select>
+          <button className="btn sm" type="button" onClick={run} disabled={!canRun || !workerId}>
             ▶ {t('tasks.run')}
           </button>
           <div className="admission-ctl">

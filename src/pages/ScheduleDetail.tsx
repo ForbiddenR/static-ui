@@ -4,7 +4,7 @@ import { useI18n } from '../i18n';
 import { useDB } from '../hooks';
 import { Panel } from '../components/ui';
 import { BackLink, DetailHero, ScheduleNextRun, StatusBadge, timeShort } from '../components/console';
-import { refreshScheduleNextRuns, toggleSchedule, triggerSchedule } from '../store/api';
+import { refreshScheduleNextRuns, setScheduleTargetWorker, toggleSchedule, triggerSchedule } from '../store/api';
 import type { ScheduleRun } from '../store/db';
 
 function triggerFeedback(run: ScheduleRun): string {
@@ -39,6 +39,7 @@ export default function ScheduleDetail() {
   const runs = db.runs.filter((run) => run.schedule_id === schedule.id);
   const materialized = runs.filter((run) => run.status === 'task_created');
   const task = db.tasks.find((item) => item.id === schedule.task_id);
+  const targetWorker = db.workers.find((item) => item.id === schedule.target_worker_id);
   const lastTaskRun = schedule.last_task_run_id
     ? db.taskRuns.find((item) => item.id === schedule.last_task_run_id)
     : undefined;
@@ -50,6 +51,12 @@ export default function ScheduleDetail() {
       setFlash(triggerFeedback(run));
       window.setTimeout(() => setFlash(''), 4000);
     }
+  };
+
+  const reappointWorker = (workerId: string) => {
+    const pin = workerId === 'auto' ? null : workerId;
+    if (pin === schedule.target_worker_id) return;
+    setScheduleTargetWorker(schedule.id, pin);
   };
 
   return (
@@ -139,6 +146,35 @@ export default function ScheduleDetail() {
               <button className="btn ghost sm relationship-link" type="button" onClick={() => navigate(`/job-definitions/${schedule.bot_id}`)}>
                 {schedule.bot_code || schedule.bot_id}
               </button>
+            </dd>
+            <dt>{t('sch.f.worker')}</dt>
+            <dd>
+              <div className="schedule-worker-appoint">
+                <select
+                  value={schedule.target_worker_id ?? 'auto'}
+                  disabled={schedule.status === 'archived'}
+                  onChange={(event) => reappointWorker(event.target.value)}
+                  aria-label={t('sch.f.worker')}
+                >
+                  <option value="auto">{t('sch.f.worker.auto')}</option>
+                  {db.workers.map((worker) => (
+                    <option key={worker.id} value={worker.id}>
+                      {worker.name} // {worker.status} // {worker.capacity_used}/{worker.capacity_max}
+                    </option>
+                  ))}
+                </select>
+                {targetWorker ? (
+                  <button
+                    className="btn ghost sm relationship-link"
+                    type="button"
+                    onClick={() => navigate(`/workers/${targetWorker.id}`)}
+                  >
+                    {targetWorker.name}
+                  </button>
+                ) : (
+                  <span className="chip violet">{t('sch.f.worker.auto')}</span>
+                )}
+              </div>
             </dd>
             <dt>{t('sch.f.overlap')}</dt><dd><span className="chip neon">{schedule.overlap_policy}</span></dd>
             <dt>{t('sch.f.missed')}</dt><dd><span className="chip amber">{schedule.missed_run_policy}</span></dd>

@@ -248,6 +248,7 @@ interface MaterializeInput {
   source_task_run_id?: string | null;
   schedule_id?: string | null;
   schedule_run_id?: string | null;
+  target_worker_id?: string | null;
   input_source: InputSource;
   input_file_id?: string | null;
   input_params?: JsonObject;
@@ -304,6 +305,7 @@ function materializeTaskRun(input: MaterializeInput): TaskRun | null {
       total: count, success: 0, failed: 0, skipped: 0, timeout: 0, canceled: 0, pending: count, running: 0, completed: 0,
     },
     items,
+    target_worker_id: input.target_worker_id ?? null,
     worker_id: null,
     error_code: null,
     created_at: ts,
@@ -325,6 +327,8 @@ export interface RunTaskInput {
   requirements?: JsonObject;
   priority?: number;
   run_type?: 'manual' | 'api';
+  /** Worker appointed for this manual/api run. Required by the Task detail UI. */
+  target_worker_id?: string | null;
 }
 
 export function runTask(taskId: string, overrides?: RunTaskInput): TaskRun | null {
@@ -332,10 +336,16 @@ export function runTask(taskId: string, overrides?: RunTaskInput): TaskRun | nul
   if (!task || task.status !== 'enabled') return null;
   const resolved = resolvePublishedBotVersion(task.bot_id, task.bot_version_id);
   if (!resolved.ok || resolved.bot.status !== 'enabled') return null;
+  const rawTarget = overrides?.target_worker_id;
+  const targetWorkerId = rawTarget == null || rawTarget === '' || rawTarget === 'auto' || rawTarget === 'random'
+    ? null
+    : rawTarget;
+  if (targetWorkerId && !db.workers.some((worker) => worker.id === targetWorkerId)) return null;
   const taskRun = materializeTaskRun({
     task,
     resolution: resolved,
     run_type: overrides?.run_type ?? 'manual',
+    target_worker_id: targetWorkerId,
     input_source: task.input_source,
     input_file_id: task.input_file_id,
     input_params: overrides?.input_params ?? task.input_params,
@@ -344,7 +354,12 @@ export function runTask(taskId: string, overrides?: RunTaskInput): TaskRun | nul
     priority: overrides?.priority ?? task.priority,
   });
   return taskRun
-    ? commitTaskRun(taskRun, `task run created from template ${task.name} with frozen Job Definition Version ${resolved.version.version}`)
+    ? commitTaskRun(
+      taskRun,
+      targetWorkerId
+        ? `task run created from template ${task.name}; target worker ${targetWorkerId}; frozen Job Definition Version ${resolved.version.version}`
+        : `task run created from template ${task.name} with frozen Job Definition Version ${resolved.version.version}`,
+    )
     : null;
 }
 
@@ -453,10 +468,19 @@ export interface CreateScheduleInput {
   description?: string | null;
   cron: string;
   timezone?: string;
+  /**
+   * Worker pin for every fire. Pass a worker id, or null / 'auto' for auto dispatch.
+   */
+  target_worker_id?: string | null;
   overlap_policy?: Schedule['overlap_policy'];
   missed_run_policy?: Schedule['missed_run_policy'];
   jitter_seconds?: number;
   enabled?: boolean;
+}
+
+function resolveTargetWorkerPin(value: string | null | undefined): string | null | false {
+  if (value == null || value === '' || value === 'auto' || value === 'random') return null;
+  return db.workers.some((item) => item.id === value) ? value : false;
 }
 
 export async function createSchedule(input: CreateScheduleInput): Promise<Schedule | null> {
@@ -464,6 +488,8 @@ export async function createSchedule(input: CreateScheduleInput): Promise<Schedu
   if (!task || task.status === 'archived') return null;
   const bot = db.bots.find((item) => item.id === task.bot_id);
   if (!bot || bot.status === 'archived') return null;
+  const targetPin = resolveTargetWorkerPin(input.target_worker_id);
+  if (targetPin === false) return null;
   const timezone = validateTimezone(input.timezone ?? 'Asia/Shanghai');
   if (!timezone || !await validateCron(input.cron, timezone)) return null;
   if (!input.name.trim()) return null;
@@ -480,6 +506,7 @@ export async function createSchedule(input: CreateScheduleInput): Promise<Schedu
     description: input.description ?? null,
     cron: input.cron.trim(),
     timezone,
+    target_worker_id: targetPin,
     status: enabled ? 'enabled' : 'disabled',
     enabled,
     overlap_policy: 'skip',
@@ -498,6 +525,18 @@ export async function createSchedule(input: CreateScheduleInput): Promise<Schedu
   db.schedules.unshift(schedule);
   emitHelpers.emit();
   return schedule;
+}
+
+export function setScheduleTargetWorker(scheduleId: string, workerId: string | null): boolean {
+  const schedule = db.schedules.find((item) => item.id === scheduleId);
+  if (!schedule || schedule.status === 'archived') return false;
+  const targetPin = resolveTargetWorkerPin(workerId);
+  if (targetPin === false) return false;
+  if (schedule.target_worker_id === targetPin) return true;
+  schedule.target_worker_id = targetPin;
+  schedule.updated_at = now();
+  emitHelpers.emit();
+  return true;
 }
 
 export function toggleSchedule(scheduleId: string): void {
@@ -557,6 +596,9 @@ function commitScheduleDecision(input: Decision): ScheduleRun | null {
   } else if (task.status !== 'enabled') {
     status = 'skipped';
     reason = 'task_disabled';
+  } else if (schedule.target_worker_id && !db.workers.some((item) => item.id === schedule.target_worker_id)) {
+    status = 'skipped';
+    reason = 'target_worker_missing';
   } else {
     const resolved = resolvePublishedBotVersion(task.bot_id, task.bot_version_id);
     if (!resolved.ok) {
@@ -575,6 +617,7 @@ function commitScheduleDecision(input: Decision): ScheduleRun | null {
         run_type: 'schedule',
         schedule_id: schedule.id,
         schedule_run_id: runId,
+        target_worker_id: schedule.target_worker_id,
         input_source: task.input_source,
         input_file_id: task.input_file_id,
         input_params: task.input_params,

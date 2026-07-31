@@ -18,6 +18,7 @@ function CreateScheduleForm({ onDone }: { onDone: () => void }) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [taskId, setTaskId] = useState('');
+  const [workerId, setWorkerId] = useState('');
   const [cron, setCron] = useState('0 2 * * *');
   const [tz, setTz] = useState('Asia/Shanghai');
   const [overlap, setOverlap] = useState<Schedule['overlap_policy']>('skip');
@@ -27,17 +28,19 @@ function CreateScheduleForm({ onDone }: { onDone: () => void }) {
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
 
-  // Schedules bind a Task template; timing/policies only.
+  // Schedules bind a Task template + appoint a target Worker for every fire.
   const availableTasks = db.tasks.filter((task) => task.status !== 'archived');
   const selectedTask = availableTasks.find((task) => task.id === taskId);
+  const workers = db.workers;
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (busy) return;
-    if (!name.trim() || !taskId || !cron.trim()) {
+    if (!name.trim() || !taskId || !workerId || !cron.trim()) {
       setErr(t('sch.err.required'));
       return;
     }
+    const targetWorkerId = workerId === 'auto' ? null : workerId;
 
     const timezone = validateTimezone(tz);
     if (!timezone) {
@@ -58,6 +61,7 @@ function CreateScheduleForm({ onDone }: { onDone: () => void }) {
         description: description.trim() || null,
         cron: cron.trim(),
         timezone,
+        target_worker_id: targetWorkerId,
         overlap_policy: overlap,
         missed_run_policy: missed,
         jitter_seconds: Math.max(0, parseInt(jitter, 10) || 0),
@@ -99,6 +103,18 @@ function CreateScheduleForm({ onDone }: { onDone: () => void }) {
           <div className="field">
             <label>{t('dash.col.jobDefinition')}</label>
             <input value={selectedTask ? (selectedTask.bot_code || selectedTask.bot_id) : '—'} disabled readOnly />
+          </div>
+          <div className="field">
+            <label>{t('sch.f.worker')}</label>
+            <select value={workerId} onChange={(e) => setWorkerId(e.target.value)}>
+              <option value="">{t('sch.f.worker.pick')}</option>
+              <option value="auto">{t('sch.f.worker.auto')}</option>
+              {workers.map((worker) => (
+                <option key={worker.id} value={worker.id}>
+                  {worker.name} // {worker.status} // {worker.capacity_used}/{worker.capacity_max}
+                </option>
+              ))}
+            </select>
           </div>
           <div className="field">
             <label>{t('sch.f.cron')}</label>
@@ -189,6 +205,7 @@ export default function SchedulesConsole() {
                 <th>{t('sch.col.name')}</th>
                 <th>{t('sch.col.task')}</th>
                 <th>{t('dash.col.jobDefinition')}</th>
+                <th>{t('sch.col.worker')}</th>
                 <th>{t('dash.col.status')}</th>
                 <th>{t('sch.col.cron')}</th>
                 <th className="schedule-next-col">{t('sch.col.nextRun')}</th>
@@ -200,11 +217,15 @@ export default function SchedulesConsole() {
             <tbody>
               {schedules.map((schedule) => {
                 const task = db.tasks.find((item) => item.id === schedule.task_id);
+                const worker = schedule.target_worker_id
+                  ? db.workers.find((item) => item.id === schedule.target_worker_id)
+                  : undefined;
                 return (
                   <tr key={schedule.id} onClick={() => navigate(`/schedules/${schedule.id}`)}>
                     <td className="strong">{schedule.name}</td>
                     <td>{task?.name ?? schedule.task_id}</td>
                     <td>{schedule.bot_code || schedule.bot_id}</td>
+                    <td className="mono">{worker?.name ?? (schedule.target_worker_id ? schedule.target_worker_id : t('sch.f.worker.auto'))}</td>
                     <td><StatusBadge status={schedule.status} /></td>
                     <td className="mono">{schedule.cron} // {schedule.timezone}</td>
                     <td className="mono schedule-next-col"><ScheduleNextRun schedule={schedule} /></td>
