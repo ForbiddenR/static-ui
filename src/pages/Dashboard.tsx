@@ -11,17 +11,18 @@ export default function Dashboard() {
   const db = useDB();
   const navigate = useNavigate();
 
-  const active = db.tasks.filter((x) => !TERMINAL.has(x.status)).length;
-  const succeeded = db.tasks.filter((x) => x.status === 'success' || x.status === 'partial_success').length;
-  const failed = db.tasks.filter((x) => x.status === 'failed' || x.status === 'timeout').length;
+  const active = db.taskRuns.filter((x) => !TERMINAL.has(x.status)).length;
+  const succeeded = db.taskRuns.filter((x) => x.status === 'success' || x.status === 'partial_success').length;
+  const failed = db.taskRuns.filter((x) => x.status === 'failed' || x.status === 'timeout').length;
   const schedOn = db.schedules.filter((s) => s.enabled).length;
-  const recent = db.tasks.slice(0, 6);
+  const recent = db.taskRuns.slice(0, 6);
 
   const stats: Array<[string, string, string]> = [
     [String(db.bots.length), t('dash.jobDefinitions'), '/job-definitions'],
-    [String(active), t('dash.active'), '/tasks'],
-    [String(succeeded), t('dash.success'), '/tasks'],
-    [String(failed), t('dash.failed'), '/tasks'],
+    [String(db.tasks.filter((task) => task.status !== 'archived').length), t('dash.tasks'), '/tasks'],
+    [String(active), t('dash.active'), '/task-runs'],
+    [String(succeeded), t('dash.success'), '/task-runs'],
+    [String(failed), t('dash.failed'), '/task-runs'],
     [String(schedOn), t('dash.schedules'), '/schedules'],
     [String(db.workers.filter((w) => w.status === 'online').length), t('dash.workers'), '/workers'],
   ];
@@ -49,16 +50,17 @@ export default function Dashboard() {
 
       <div className="section-head">
         <h2 className="sec-title" style={{ margin: '18px 0 14px' }}>{t('dash.recent')}</h2>
-        <Link className="btn ghost sm" style={{ textDecoration: 'none' }} to="/tasks">{t('dash.viewall')} →</Link>
+        <Link className="btn ghost sm" style={{ textDecoration: 'none' }} to="/task-runs">{t('dash.viewall')} →</Link>
       </div>
 
       {recent.length === 0 ? (
-        <div className="empty">{t('tasks.empty')}</div>
+        <div className="empty">{t('taskRuns.empty')}</div>
       ) : (
         <table className="data">
           <thead>
             <tr>
-              <th>{t('dash.col.task')}</th>
+              <th>{t('dash.col.taskRun')}</th>
+              <th>{t('tasks.col.name')}</th>
               <th>{t('dash.col.jobDefinition')}</th>
               <th>{t('dash.col.status')}</th>
               <th>{t('dash.col.progress')}</th>
@@ -66,15 +68,19 @@ export default function Dashboard() {
             </tr>
           </thead>
           <tbody>
-            {recent.map((task) => (
-              <tr key={task.id} onClick={() => navigate(`/tasks/${task.id}`)}>
-                <td className="mono strong">{task.id}</td>
-                <td>{task.bot_code || task.bot_id}</td>
-                <td><StatusBadge status={task.status} /></td>
-                <td style={{ minWidth: 140 }}><Progress task={task} /></td>
-                <td className="mono">{timeShort(task.created_at)}</td>
-              </tr>
-            ))}
+            {recent.map((run) => {
+              const task = db.tasks.find((item) => item.id === run.task_id);
+              return (
+                <tr key={run.id} onClick={() => navigate(`/task-runs/${run.id}`)}>
+                  <td className="mono strong">{run.id}</td>
+                  <td>{task?.name ?? run.task_id}</td>
+                  <td>{run.bot_code || run.bot_id}</td>
+                  <td><StatusBadge status={run.status} /></td>
+                  <td style={{ minWidth: 140 }}><Progress task={run} /></td>
+                  <td className="mono">{timeShort(run.created_at)}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       )}

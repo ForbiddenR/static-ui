@@ -9,6 +9,7 @@ import {
   createTask,
   publishJobDefinitionVersion,
   resolvePublishedJobDefinitionVersion,
+  runTask,
   toggleJobDefinition,
 } from '../store/api';
 import type { InputSource, JsonObject } from '../store/db';
@@ -61,8 +62,9 @@ export default function JobDefinitionDetail() {
   const runnable = jobDefinition.status === 'enabled'
     && versionResolution.ok
     && versionResolution.version.default_input_source !== 'file';
-  const tasks = db.tasks.filter((task) => task.bot_id === jobDefinition.id);
-  const activeTasks = tasks.filter((task) => !TERMINAL.has(task.status));
+  const tasks = db.tasks.filter((task) => task.bot_id === jobDefinition.id && task.status !== 'archived');
+  const taskRuns = db.taskRuns.filter((run) => run.bot_id === jobDefinition.id);
+  const activeRuns = taskRuns.filter((run) => !TERMINAL.has(run.status));
   const schedules = db.schedules.filter((schedule) => schedule.bot_id === jobDefinition.id);
 
   const showFlash = (message: string) => {
@@ -104,13 +106,30 @@ export default function JobDefinitionDetail() {
     }
   };
 
+  // One-shot: ensure a default template exists, then run it as a TaskRun.
   const run = () => {
-    const task = createTask({
-      bot_id: jobDefinition.id,
-      input_source: versionResolution.ok ? versionResolution.version.default_input_source : undefined,
-      input_params: versionResolution.ok && versionResolution.version.default_input_source === 'params' ? {} : undefined,
-    });
-    if (task) navigate(`/tasks/${task.id}`);
+    if (!versionResolution.ok) {
+      showFlash(t('jobDefinitions.err.runRejected'));
+      return;
+    }
+    let template = tasks.find((task) => task.status === 'enabled' && !task.bot_version_id)
+      ?? tasks.find((task) => task.status === 'enabled');
+    if (!template) {
+      template = createTask({
+        bot_id: jobDefinition.id,
+        name: `${jobDefinition.code} default`,
+        input_source: versionResolution.version.default_input_source === 'task_items'
+          ? 'params'
+          : versionResolution.version.default_input_source,
+        input_params: versionResolution.version.default_input_source === 'params' ? {} : undefined,
+      }) ?? undefined;
+    }
+    if (!template) {
+      showFlash(t('jobDefinitions.err.runRejected'));
+      return;
+    }
+    const taskRun = runTask(template.id);
+    if (taskRun) navigate(`/task-runs/${taskRun.id}`);
     else showFlash(t('jobDefinitions.err.runRejected'));
   };
 
@@ -183,10 +202,10 @@ export default function JobDefinitionDetail() {
         </div>
         <div className="stat">
           <div className="stat-val">{tasks.length}</div>
-          <div className="stat-label">{t('jobDefinitions.stat.runs')}</div>
+          <div className="stat-label">{t('jobDefinitions.stat.tasks')}</div>
         </div>
         <div className="stat">
-          <div className="stat-val green">{activeTasks.length}</div>
+          <div className="stat-val green">{activeRuns.length}</div>
           <div className="stat-label">{t('jobDefinitions.stat.active')}</div>
         </div>
       </div>
@@ -311,6 +330,41 @@ export default function JobDefinitionDetail() {
         </table>
       </div>
 
+      <h2 className="sec-title worker-section-title">{t('jobDefinitions.detail.tasks')}</h2>
+      {tasks.length === 0 ? (
+        <div className="empty">{t('jobDefinitions.detail.notasks')}</div>
+      ) : (
+        <div className="data-scroll">
+          <table className="data">
+            <thead>
+              <tr>
+                <th>{t('tasks.col.name')}</th>
+                <th>{t('tasks.f.version')}</th>
+                <th>{t('tasks.f.inputSource')}</th>
+                <th>{t('dash.col.status')}</th>
+                <th>{t('dash.col.created')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {tasks.map((task) => {
+                const pinned = task.bot_version_id
+                  ? versions.find((candidate) => candidate.id === task.bot_version_id)
+                  : undefined;
+                return (
+                  <tr key={task.id} onClick={() => navigate(`/tasks/${task.id}`)}>
+                    <td className="strong">{task.name}</td>
+                    <td className="mono">{pinned ? `v${pinned.version}` : t('tasks.version.current')}</td>
+                    <td><span className="chip violet">{task.input_source}</span></td>
+                    <td><StatusBadge status={task.status} /></td>
+                    <td className="mono">{timeShort(task.created_at)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       <h2 className="sec-title worker-section-title">{t('jobDefinitions.detail.schedules')}</h2>
       {schedules.length === 0 ? (
         <div className="empty">{t('jobDefinitions.detail.noschedules')}</div>
@@ -320,7 +374,7 @@ export default function JobDefinitionDetail() {
             <thead>
               <tr>
                 <th>{t('sch.col.name')}</th>
-                <th>{t('jobDefinitions.col.version')}</th>
+                <th>{t('sch.col.task')}</th>
                 <th>{t('sch.col.cron')}</th>
                 <th>{t('sch.col.nextRun')}</th>
                 <th>{t('dash.col.status')}</th>
@@ -328,13 +382,11 @@ export default function JobDefinitionDetail() {
             </thead>
             <tbody>
               {schedules.map((schedule) => {
-                const pinned = schedule.bot_version_id
-                  ? versions.find((candidate) => candidate.id === schedule.bot_version_id)
-                  : undefined;
+                const boundTask = db.tasks.find((item) => item.id === schedule.task_id);
                 return (
                   <tr key={schedule.id} onClick={() => navigate(`/schedules/${schedule.id}`)}>
                     <td className="strong">{schedule.name}</td>
-                    <td className="mono">{pinned ? `v${pinned.version}` : t('sch.version.current')}</td>
+                    <td>{boundTask?.name ?? schedule.task_id}</td>
                     <td className="mono">{schedule.cron}</td>
                     <td className="mono"><ScheduleNextRun schedule={schedule} /></td>
                     <td><StatusBadge status={schedule.status} /></td>
@@ -346,15 +398,16 @@ export default function JobDefinitionDetail() {
         </div>
       )}
 
-      <h2 className="sec-title worker-section-title">{t('jobDefinitions.detail.tasks')}</h2>
-      {tasks.length === 0 ? (
-        <div className="empty">{t('jobDefinitions.detail.notasks')}</div>
+      <h2 className="sec-title worker-section-title">{t('jobDefinitions.detail.taskRuns')}</h2>
+      {taskRuns.length === 0 ? (
+        <div className="empty">{t('jobDefinitions.detail.noruns')}</div>
       ) : (
         <div className="data-scroll">
           <table className="data">
             <thead>
               <tr>
-                <th>{t('tasks.col.id')}</th>
+                <th>{t('taskRuns.col.id')}</th>
+                <th>{t('tasks.col.name')}</th>
                 <th>{t('tasks.col.runtype')}</th>
                 <th>{t('dash.col.status')}</th>
                 <th>{t('dash.col.progress')}</th>
@@ -362,15 +415,19 @@ export default function JobDefinitionDetail() {
               </tr>
             </thead>
             <tbody>
-              {tasks.map((task) => (
-                <tr key={task.id} onClick={() => navigate(`/tasks/${task.id}`)}>
-                  <td className="mono strong">{task.id}</td>
-                  <td><span className="chip violet">{task.run_type}</span></td>
-                  <td><StatusBadge status={task.status} /></td>
-                  <td style={{ minWidth: 140 }}><Progress task={task} /></td>
-                  <td className="mono">{timeShort(task.created_at)}</td>
-                </tr>
-              ))}
+              {taskRuns.slice(0, 12).map((run) => {
+                const template = db.tasks.find((item) => item.id === run.task_id);
+                return (
+                  <tr key={run.id} onClick={() => navigate(`/task-runs/${run.id}`)}>
+                    <td className="mono strong">{run.id}</td>
+                    <td>{template?.name ?? run.task_id}</td>
+                    <td><span className="chip violet">{run.run_type}</span></td>
+                    <td><StatusBadge status={run.status} /></td>
+                    <td style={{ minWidth: 140 }}><Progress task={run} /></td>
+                    <td className="mono">{timeShort(run.created_at)}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

@@ -5,20 +5,11 @@ import { useDB } from '../hooks';
 import { PageHeader, Panel } from '../components/ui';
 import { ScheduleNextRun, StatusBadge, timeShort } from '../components/console';
 import { createSchedule, refreshScheduleNextRuns, triggerSchedule } from '../store/api';
-import type { InputSource, JsonObject, Schedule, ScheduleRun } from '../store/db';
+import type { Schedule, ScheduleRun } from '../store/db';
 import { validateCron, validateTimezone } from '../store/scheduleTime';
 
 function triggerFeedback(run: ScheduleRun): string {
   return `${run.id} // ${run.status}${run.reason ? ` // ${run.reason}` : ''}`;
-}
-
-function parseObject(value: string): JsonObject | null {
-  try {
-    const parsed: unknown = JSON.parse(value || '{}');
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as JsonObject : null;
-  } catch {
-    return null;
-  }
 }
 
 function CreateScheduleForm({ onDone }: { onDone: () => void }) {
@@ -26,15 +17,9 @@ function CreateScheduleForm({ onDone }: { onDone: () => void }) {
   const db = useDB();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [botId, setBotId] = useState('');
-  const [versionId, setVersionId] = useState('');
+  const [taskId, setTaskId] = useState('');
   const [cron, setCron] = useState('0 2 * * *');
   const [tz, setTz] = useState('Asia/Shanghai');
-  const [inputSource, setInputSource] = useState<InputSource>('params');
-  const [inputFileId, setInputFileId] = useState('');
-  const [inputParams, setInputParams] = useState('{}');
-  const [config, setConfig] = useState('{}');
-  const [requirements, setRequirements] = useState('{}');
   const [overlap, setOverlap] = useState<Schedule['overlap_policy']>('skip');
   const [missed, setMissed] = useState<Schedule['missed_run_policy']>('skip');
   const [jitter, setJitter] = useState('300');
@@ -42,17 +27,14 @@ function CreateScheduleForm({ onDone }: { onDone: () => void }) {
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
 
-  // A Schedule definition may target any non-archived Job Definition. Whether a
-  // later decision materializes a Task is recorded by its ScheduleRun.
-  const availableJobDefinitions = db.bots.filter((jobDefinition) => jobDefinition.status !== 'archived');
-  const publishedVersions = db.versions.filter(
-    (version) => version.bot_id === botId && version.status === 'published',
-  );
+  // Schedules bind a Task template; timing/policies only.
+  const availableTasks = db.tasks.filter((task) => task.status !== 'archived');
+  const selectedTask = availableTasks.find((task) => task.id === taskId);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (busy) return;
-    if (!name.trim() || !botId || !cron.trim()) {
+    if (!name.trim() || !taskId || !cron.trim()) {
       setErr(t('sch.err.required'));
       return;
     }
@@ -60,18 +42,6 @@ function CreateScheduleForm({ onDone }: { onDone: () => void }) {
     const timezone = validateTimezone(tz);
     if (!timezone) {
       setErr(t('sch.err.timezone'));
-      return;
-    }
-
-    const parsedInputParams = inputSource === 'params' ? parseObject(inputParams) : {};
-    const parsedConfig = parseObject(config);
-    const parsedRequirements = parseObject(requirements);
-    if (!parsedInputParams || !parsedConfig || !parsedRequirements) {
-      setErr(t('tasks.err.json'));
-      return;
-    }
-    if (inputSource === 'file' && !inputFileId.trim()) {
-      setErr(t('sch.err.inputFileRequired'));
       return;
     }
 
@@ -83,17 +53,11 @@ function CreateScheduleForm({ onDone }: { onDone: () => void }) {
       }
 
       const schedule = await createSchedule({
-        bot_id: botId,
-        bot_version_id: versionId || null,
+        task_id: taskId,
         name: name.trim(),
         description: description.trim() || null,
         cron: cron.trim(),
         timezone,
-        input_source: inputSource,
-        input_file_id: inputSource === 'file' ? inputFileId.trim() : null,
-        input_params: parsedInputParams,
-        config: parsedConfig,
-        requirements: parsedRequirements,
         overlap_policy: overlap,
         missed_run_policy: missed,
         jitter_seconds: Math.max(0, parseInt(jitter, 10) || 0),
@@ -122,22 +86,19 @@ function CreateScheduleForm({ onDone }: { onDone: () => void }) {
             <input value={description} onChange={(e) => setDescription(e.target.value)} />
           </div>
           <div className="field">
-            <label>{t('tasks.f.jobDefinition')}</label>
-            <select value={botId} onChange={(e) => { setBotId(e.target.value); setVersionId(''); }}>
-              <option value="">{t('tasks.f.jobDefinition.pick')}</option>
-              {availableJobDefinitions.map((jobDefinition) => (
-                <option key={jobDefinition.id} value={jobDefinition.id}>{jobDefinition.code}</option>
+            <label>{t('sch.f.task')}</label>
+            <select value={taskId} onChange={(e) => setTaskId(e.target.value)}>
+              <option value="">{t('sch.f.task.pick')}</option>
+              {availableTasks.map((task) => (
+                <option key={task.id} value={task.id}>
+                  {task.name} // {task.bot_code || task.bot_id}
+                </option>
               ))}
             </select>
           </div>
           <div className="field">
-            <label>{t('sch.f.version')}</label>
-            <select value={versionId} onChange={(e) => setVersionId(e.target.value)} disabled={!botId}>
-              <option value="">{t('sch.version.current')}</option>
-              {publishedVersions.map((version) => (
-                <option key={version.id} value={version.id}>{version.version} — {version.script_file}</option>
-              ))}
-            </select>
+            <label>{t('dash.col.jobDefinition')}</label>
+            <input value={selectedTask ? (selectedTask.bot_code || selectedTask.bot_id) : '—'} disabled readOnly />
           </div>
           <div className="field">
             <label>{t('sch.f.cron')}</label>
@@ -146,30 +107,6 @@ function CreateScheduleForm({ onDone }: { onDone: () => void }) {
           <div className="field">
             <label>{t('sch.f.tz')}</label>
             <input value={tz} onChange={(e) => setTz(e.target.value)} />
-          </div>
-          <div className="field">
-            <label>{t('sch.f.inputSource')}</label>
-            <select value={inputSource} onChange={(e) => setInputSource(e.target.value as InputSource)}>
-              <option value="params">params</option>
-              <option value="file">file</option>
-              <option value="none">none</option>
-            </select>
-          </div>
-          <div className="field">
-            <label>{t('sch.f.inputFileId')}</label>
-            <input value={inputFileId} disabled={inputSource !== 'file'} onChange={(e) => setInputFileId(e.target.value)} />
-          </div>
-          <div className="field full">
-            <label>{t('tasks.f.params')}</label>
-            <textarea value={inputParams} disabled={inputSource !== 'params'} onChange={(e) => setInputParams(e.target.value)} />
-          </div>
-          <div className="field">
-            <label>{t('sch.f.config')}</label>
-            <textarea value={config} onChange={(e) => setConfig(e.target.value)} />
-          </div>
-          <div className="field">
-            <label>{t('sch.f.requirements')}</label>
-            <textarea value={requirements} onChange={(e) => setRequirements(e.target.value)} />
           </div>
           <div className="field">
             <label>{t('sch.f.overlap')}</label>
@@ -249,28 +186,38 @@ export default function SchedulesConsole() {
           <table className="data schedule-table">
             <thead>
               <tr>
-                <th>{t('sch.col.name')}</th><th>{t('dash.col.jobDefinition')}</th><th>{t('dash.col.status')}</th>
-                <th>{t('sch.col.cron')}</th><th className="schedule-next-col">{t('sch.col.nextRun')}</th>
-                <th>{t('sch.col.run')}</th><th>{t('sch.col.task')}</th><th className="schedule-actions-col">{t('dash.col.actions')}</th>
+                <th>{t('sch.col.name')}</th>
+                <th>{t('sch.col.task')}</th>
+                <th>{t('dash.col.jobDefinition')}</th>
+                <th>{t('dash.col.status')}</th>
+                <th>{t('sch.col.cron')}</th>
+                <th className="schedule-next-col">{t('sch.col.nextRun')}</th>
+                <th>{t('sch.col.run')}</th>
+                <th>{t('sch.col.taskRun')}</th>
+                <th className="schedule-actions-col">{t('dash.col.actions')}</th>
               </tr>
             </thead>
             <tbody>
-              {schedules.map((schedule) => (
-                <tr key={schedule.id} onClick={() => navigate(`/schedules/${schedule.id}`)}>
-                  <td className="strong">{schedule.name}</td>
-                  <td>{schedule.bot_code || schedule.bot_id}</td>
-                  <td><StatusBadge status={schedule.status} /></td>
-                  <td className="mono">{schedule.cron} // {schedule.timezone}</td>
-                  <td className="mono schedule-next-col"><ScheduleNextRun schedule={schedule} /></td>
-                  <td className="mono">{schedule.last_run_at ? timeShort(schedule.last_run_at) : '—'}</td>
-                  <td className="mono">{schedule.last_task_id ?? '—'}</td>
-                  <td className="schedule-actions-col" onClick={(event) => event.stopPropagation()}>
-                    <button className="btn sm" type="button" onClick={() => trigger(schedule.id)} disabled={schedule.status !== 'enabled'}>
-                      ⏵ {t('sch.trigger')}
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {schedules.map((schedule) => {
+                const task = db.tasks.find((item) => item.id === schedule.task_id);
+                return (
+                  <tr key={schedule.id} onClick={() => navigate(`/schedules/${schedule.id}`)}>
+                    <td className="strong">{schedule.name}</td>
+                    <td>{task?.name ?? schedule.task_id}</td>
+                    <td>{schedule.bot_code || schedule.bot_id}</td>
+                    <td><StatusBadge status={schedule.status} /></td>
+                    <td className="mono">{schedule.cron} // {schedule.timezone}</td>
+                    <td className="mono schedule-next-col"><ScheduleNextRun schedule={schedule} /></td>
+                    <td className="mono">{schedule.last_run_at ? timeShort(schedule.last_run_at) : '—'}</td>
+                    <td className="mono">{schedule.last_task_run_id ?? '—'}</td>
+                    <td className="schedule-actions-col" onClick={(event) => event.stopPropagation()}>
+                      <button className="btn sm" type="button" onClick={() => trigger(schedule.id)} disabled={schedule.status !== 'enabled'}>
+                        ⏵ {t('sch.trigger')}
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

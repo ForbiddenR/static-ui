@@ -8,20 +8,21 @@ identifiers.
 
 ## Features
 
-- **Dashboard** — live counters (job definitions, active/succeeded/failed tasks, enabled schedules) and recent task list.
-- **Job Definitions** (`/job-definitions`) — manage `draft | enabled | disabled | archived` lifecycle, executable defaults, numeric Job Definition Versions, atomic publication/current-version promotion, rollback, and direct manual runs. Individual definitions use `/job-definitions/:jobDefinitionId`.
-- **Task Console** (`/tasks`) — resolve the current or an explicit published version at creation time; capture `none`, `params`, or `file` input plus config, requirements, and priority; then preserve an immutable execution snapshot. The live status machine is
+- **Dashboard** — live counters (job definitions, task templates, active/succeeded/failed task runs, enabled schedules) and recent TaskRun list.
+- **Job Definitions** (`/job-definitions`) — manage `draft | enabled | disabled | archived` lifecycle, executable defaults, numeric Job Definition Versions, atomic publication/current-version promotion, rollback, and one-shot runs via Task templates. Individual definitions use `/job-definitions/:jobDefinitionId`.
+- **Task Templates** (`/tasks`) — reusable run templates under a Job Definition. Save name, optional version pin, input/config/requirements/priority, and enable/disable without dispatching. Detail view runs the template, lists bound Schedules, and recent TaskRuns.
+- **Task Runs** (`/task-runs`) — live executions of a Task template. Status machine
   `pending → dispatching → running → success | partial_success | failed | canceled | timeout`,
   with progress, cancel, retry-all, retry-failed-items, re-run, TaskItem detail, and terminal logs.
-- **Schedule Control** (`/schedules`) — save a complete execution template independently of current runnability, choose a pinned version or trigger-time current-version resolution, configure cron/timezone, `skip | run_once` missed-run policy, jitter, and initial status, then inspect every ScheduleRun decision (`task_created | skipped | failed`) with optional Task drilldown.
+- **Schedule Control** (`/schedules`) — binds a **Task** (not a Job Definition). Timing and policies only: cron/timezone, `skip | run_once` missed-run policy, jitter, initial status. Every decision is a ScheduleRun (`task_created | skipped | failed`) with optional TaskRun drilldown.
 - **Worker Pool** (`/workers`) — online/offline and enabled state, capacity use, tags, runtime version,
-  session and heartbeat metadata, assigned-task drilldown, capacity-aware mock dispatch, live per-node
+  session and heartbeat metadata, assigned TaskRun drilldown, capacity-aware mock dispatch, live per-node
   telemetry sparklines (CPU / memory / throughput / heartbeat RTT with hover scrubbing), and a
   streaming worker log (session, dispatch, heartbeat, and runtime events).
-- **Full-page detail views** — Job Definitions, tasks, schedules, schedule runs, and workers open dedicated routes
+- **Full-page detail views** — Job Definitions, tasks, task runs, schedules, schedule runs, and workers open dedicated routes
   with a corner-bracketed HUD hero, terminal-style `cd ..` back link, live stat strip, and
   cross-linked related records.
-- **Mock execution engine** — a 1.5 s heartbeat advances active tasks through the real lifecycle,
+- **Mock execution engine** — a 1.5 s heartbeat advances active TaskRuns through the real lifecycle,
   including terminal-state arbitration from TaskItem statistics per `docs/Task执行规范.md`.
 - **i18n** — English / 中文 toggle. **Theme** — dark / light cyberpunk palettes. Both persisted.
 
@@ -38,13 +39,29 @@ codes and environment variables, `bot_sdk`, `bot_script`, `botops-theme`,
 `botops-lang`, `botops-db-v2`, `botops-server`, `BOTOPS_DATA_DIR`, and
 `botops_server`.
 
+## Hierarchy (static mock)
+
+```text
+Job Definition → Task (template) → Schedule → ScheduleRun → TaskRun
+               └─────────────────→ TaskRun (manual / api / retry / rerun)
+```
+
+- **Task** binds a Job Definition (optional version pin + input/config/priority template).
+- **Schedule** binds a Task; it does not own execution input fields.
+- **TaskRun** is one live execution (status machine, worker, items, logs) with frozen `bot_snapshot`.
+
+> This remodel is **static UI mock only** (`src/store`, pages, i18n, tests).
+> `server-rs/` and `docs/` still describe the older
+> `Job Definition → Schedule → ScheduleRun → Task(execution)` chain until a
+> follow-up contract pass.
+
 ## Execution Provenance
 
 The console preserves the resolved execution chain instead of inferring it from current state:
 
-- `Job Definition → Job Definition Version → Task` — every Task records the exact published Job Definition Version and immutable Job Definition snapshot it resolved when created. Later publication or rollback does not rewrite an existing Task.
-- `Job Definition → Schedule → ScheduleRun → Task` — a Schedule belongs to one Job Definition and may pin a published version; otherwise the published current version is resolved when a run decision is made. Every manual or due cron attempt creates a ScheduleRun. A Task is linked only when that decision materializes one.
-- Automatic decisions for enabled schedules record `task_created`, `skipped`, or `failed`, plus trigger type, planned/scheduled/triggered times, persisted jitter, policy values, reason, and error details. Disabled Job Definitions, unresolved versions, overlap skips, and missed-run skips therefore remain auditable without creating a Task; disabling a Schedule clears its pending timing rather than creating future decisions.
+- `Job Definition → Task → TaskRun` — every TaskRun freezes the published Job Definition Version snapshot resolved at materialize time. Later publication or rollback does not rewrite an existing TaskRun.
+- `Job Definition → Task → Schedule → ScheduleRun → TaskRun` — a Schedule belongs to one Task template. Every manual or due cron attempt creates a ScheduleRun. A TaskRun is linked only when that decision materializes one (`task_run_id`).
+- Automatic decisions for enabled schedules record `task_created`, `skipped`, or `failed`, plus trigger type, planned/scheduled/triggered times, persisted jitter, policy values, reason, and error details. Disabled Tasks, disabled Job Definitions, unresolved versions, overlap skips, and missed-run skips therefore remain auditable without creating a TaskRun; disabling a Schedule clears its pending timing rather than creating future decisions.
 
 ## Develop
 
@@ -65,7 +82,7 @@ The build uses hash routing and relative asset paths, so `dist/` can be hosted f
 
 ## Mock limitation
 
-The static mock is designed for a single browser tab. It has lightweight in-memory duplicate protection for cron decisions, but it does not coordinate `localStorage` state or schedule ownership across tabs.
+The static mock is designed for a single browser tab. It has lightweight in-memory duplicate protection for cron decisions, but it does not coordinate `localStorage` state or schedule ownership across tabs. Pre-v6 stored databases are reseeded on load (schema version 6).
 
 ## Performance
 
@@ -75,7 +92,7 @@ The bundle is split for fast first paint and long-term caching:
 - Console pages (except the Dashboard landing route) are lazy-loaded on first navigation.
 - `cron-parser`/`luxon` (~32 KB gzip) live in a lazy chunk fetched only when a schedule's
   next-run pair actually needs recomputing — never on the render path.
-- `localStorage` writes are debounced (flushed on tab hide) and task logs are capped,
+- `localStorage` writes are debounced (flushed on tab hide) and task-run logs are capped,
   so long simulation sessions don't bloat storage.
 
 ## Structure
@@ -84,10 +101,11 @@ The bundle is split for fast first paint and long-term caching:
 src/
   i18n/            en/zh dictionaries + provider
   store/           db.ts (mock data + pub/sub), api.ts (simulated Master REST ops),
-                   engine.ts (task lifecycle ticks), scheduleTime.ts (lazy cron/timezone math)
+                   engine.ts (TaskRun lifecycle ticks), scheduleTime.ts (lazy cron/timezone math)
   components/      Layout (sidebar/topbar), ui.tsx (design system), console.tsx (badges/progress/detail hero)
   pages/           Dashboard + entity views: JobDefinitionsConsole/JobDefinitionDetail,
-                   TasksConsole/TaskDetail, SchedulesConsole/ScheduleDetail/ScheduleRunDetail,
+                   TasksConsole/TaskDetail, TaskRunsConsole/TaskRunDetail,
+                   SchedulesConsole/ScheduleDetail/ScheduleRunDetail,
                    WorkersConsole/WorkerDetail
 ```
 

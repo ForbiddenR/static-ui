@@ -2,13 +2,13 @@ import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { useI18n } from '../i18n';
 import { formatScheduleNextRun } from '../store/scheduleTime';
-import type { Schedule, Task, Worker } from '../store/db';
+import type { Schedule, TaskRun, Worker } from '../store/db';
 
 export function StatusBadge({ status }: { status: string }) {
   return <span className={`st ${status}`}>{status.replace('_', ' ')}</span>;
 }
 
-export function Progress({ task }: { task: Task }) {
+export function Progress({ task }: { task: Pick<TaskRun, 'statistics'> }) {
   const done = task.statistics.completed
     ?? task.statistics.success
       + task.statistics.failed

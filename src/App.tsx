@@ -12,6 +12,8 @@ const JobDefinitionsConsole = lazy(() => import('./pages/JobDefinitionsConsole')
 const JobDefinitionDetail = lazy(() => import('./pages/JobDefinitionDetail'));
 const TasksConsole = lazy(() => import('./pages/TasksConsole'));
 const TaskDetail = lazy(() => import('./pages/TaskDetail'));
+const TaskRunsConsole = lazy(() => import('./pages/TaskRunsConsole'));
+const TaskRunDetail = lazy(() => import('./pages/TaskRunDetail'));
 const SchedulesConsole = lazy(() => import('./pages/SchedulesConsole'));
 const ScheduleDetail = lazy(() => import('./pages/ScheduleDetail'));
 const ScheduleRunDetail = lazy(() => import('./pages/ScheduleRunDetail'));
@@ -41,6 +43,8 @@ export default function App() {
               <Route path="bots/:botId" element={<LegacyJobDefinitionRedirect />} />
               <Route path="tasks" element={<TasksConsole />} />
               <Route path="tasks/:taskId" element={<TaskDetail />} />
+              <Route path="task-runs" element={<TaskRunsConsole />} />
+              <Route path="task-runs/:taskRunId" element={<TaskRunDetail />} />
               <Route path="schedules" element={<SchedulesConsole />} />
               <Route path="schedules/:scheduleId" element={<ScheduleDetail />} />
               <Route path="schedule-runs/:runId" element={<ScheduleRunDetail />} />

@@ -2,6 +2,7 @@
   "name": "jobops-platform-showcase",
   "version": "1.0.0",
   "private": true,
+  "type": "module",
   "description": "Cyberpunk feature showcase for the Job Definition Execution Platform V1",
   "scripts": {
     "dev": "vite",

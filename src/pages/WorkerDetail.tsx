@@ -94,13 +94,13 @@ export default function WorkerDetail() {
     );
   }
 
-  const tasks = db.tasks.filter((task) => task.worker_id === worker.id);
-  const activeTasks = tasks.filter((task) => !TERMINAL.has(task.status));
+  const taskRuns = db.taskRuns.filter((run) => run.worker_id === worker.id);
+  const activeRuns = taskRuns.filter((run) => !TERMINAL.has(run.status));
   const freeSlots = Math.max(worker.capacity_max - worker.capacity_used, 0);
   const capacityPct = worker.capacity_max === 0
     ? 0
     : Math.round((worker.capacity_used / worker.capacity_max) * 100);
-  const currentTaskIds = new Set(worker.current_task_ids);
+  const currentTaskRunIds = new Set(worker.current_task_run_ids);
 
   const metrics = db.workerMetrics[worker.id] ?? [];
   const metricTimes = metrics.map((m) => m.ts);
@@ -169,7 +169,7 @@ export default function WorkerDetail() {
         </div>
 
         <div className="stat">
-          <div className="stat-val">{worker.current_task_ids.length}</div>
+          <div className="stat-val">{worker.current_task_run_ids.length}</div>
           <div className="stat-label">{t('wkp.detail.assignedNow')}</div>
         </div>
       </div>
@@ -231,27 +231,28 @@ export default function WorkerDetail() {
               </span>
             </dd>
             <dt>{t('wkp.col.heartbeat')}</dt><dd className="mono">{timeShort(worker.last_heartbeat_at)}</dd>
-            <dt>{t('wkp.detail.assignedNow')}</dt><dd className="mono">{worker.current_task_ids.length}</dd>
+            <dt>{t('wkp.detail.assignedNow')}</dt><dd className="mono">{worker.current_task_run_ids.length}</dd>
           </dl>
         </Panel>
       </div>
 
       <div className="section-head worker-task-head">
-        <h2 className="sec-title worker-section-title">{t('wkp.detail.tasks')}</h2>
+        <h2 className="sec-title worker-section-title">{t('wkp.detail.taskRuns')}</h2>
         <div className="worker-impact">
-          <span className="chip neon">{activeTasks.length} {t('wkp.detail.active')}</span>
-          <span className="chip violet">{tasks.length} {t('wkp.detail.recorded')}</span>
+          <span className="chip neon">{activeRuns.length} {t('wkp.detail.active')}</span>
+          <span className="chip violet">{taskRuns.length} {t('wkp.detail.recorded')}</span>
         </div>
       </div>
 
-      {tasks.length === 0 ? (
+      {taskRuns.length === 0 ? (
         <div className="empty">{t('wkp.detail.notasks')}</div>
       ) : (
         <div className="data-scroll">
           <table className="data worker-task-table">
             <thead>
               <tr>
-                <th>{t('tasks.col.id')}</th>
+                <th>{t('taskRuns.col.id')}</th>
+                <th>{t('tasks.col.name')}</th>
                 <th>{t('dash.col.jobDefinition')}</th>
                 <th>{t('tasks.col.runtype')}</th>
                 <th>{t('dash.col.status')}</th>
@@ -260,21 +261,25 @@ export default function WorkerDetail() {
               </tr>
             </thead>
             <tbody>
-              {tasks.map((task) => (
-                <tr key={task.id} onClick={() => navigate(`/tasks/${task.id}`)}>
-                  <td className="mono strong">
-                    {task.id}
-                    {currentTaskIds.has(task.id) && (
-                      <span className="chip neon worker-current-chip">{t('wkp.detail.current')}</span>
-                    )}
-                  </td>
-                  <td>{task.bot_code || task.bot_id}</td>
-                  <td><span className="chip violet">{task.run_type}</span></td>
-                  <td><StatusBadge status={task.status} /></td>
-                  <td className="worker-task-progress"><Progress task={task} /></td>
-                  <td className="mono">{timeShort(task.created_at)}</td>
-                </tr>
-              ))}
+              {taskRuns.map((run) => {
+                const task = db.tasks.find((item) => item.id === run.task_id);
+                return (
+                  <tr key={run.id} onClick={() => navigate(`/task-runs/${run.id}`)}>
+                    <td className="mono strong">
+                      {run.id}
+                      {currentTaskRunIds.has(run.id) && (
+                        <span className="chip neon worker-current-chip">{t('wkp.detail.current')}</span>
+                      )}
+                    </td>
+                    <td>{task?.name ?? run.task_id}</td>
+                    <td>{run.bot_code || run.bot_id}</td>
+                    <td><span className="chip violet">{run.run_type}</span></td>
+                    <td><StatusBadge status={run.status} /></td>
+                    <td className="worker-task-progress"><Progress task={run} /></td>
+                    <td className="mono">{timeShort(run.created_at)}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

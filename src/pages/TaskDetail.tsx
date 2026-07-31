@@ -1,28 +1,23 @@
-import { useEffect, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useI18n } from '../i18n';
 import { useDB } from '../hooks';
 import { Panel } from '../components/ui';
-import { BackLink, DetailHero, StatusBadge, timeShort } from '../components/console';
-import { cancelTask, logsForTask, retryTask, rerunTask } from '../store/api';
+import { BackLink, DetailHero, Progress, ScheduleNextRun, StatusBadge, timeShort } from '../components/console';
+import { runTask, toggleTask } from '../store/api';
 
 const TERMINAL = new Set(['success', 'partial_success', 'failed', 'canceled', 'timeout']);
+
+function json(value: Record<string, unknown>): string {
+  return JSON.stringify(value, null, 2);
+}
 
 export default function TaskDetail() {
   const { t } = useI18n();
   const db = useDB();
   const { taskId } = useParams();
   const navigate = useNavigate();
-  const termRef = useRef<HTMLDivElement>(null);
 
   const task = db.tasks.find((item) => item.id === taskId);
-  const logs = task ? logsForTask(task.id) : [];
-
-  useEffect(() => {
-    const element = termRef.current;
-    if (element) element.scrollTop = element.scrollHeight;
-  }, [logs.length]);
-
   if (!task) {
     return (
       <>
@@ -36,25 +31,18 @@ export default function TaskDetail() {
     );
   }
 
-  const active = !TERMINAL.has(task.status);
-  const canRetry = ['failed', 'partial_success', 'timeout', 'canceled'].includes(task.status);
-  const failedItems = task.items.filter((item) => item.status === 'failed' || item.status === 'timeout');
-  const stats = task.statistics;
-  const done = stats.completed ?? stats.success + stats.failed + stats.skipped + (stats.timeout ?? 0) + (stats.canceled ?? 0);
-  const pct = stats.total === 0 ? 100 : Math.round((done / stats.total) * 100);
-  const worker = task.worker_id ? db.workers.find((item) => item.id === task.worker_id) : undefined;
-  const snapshot = task.bot_snapshot;
-  const schedule = task.schedule_id ? db.schedules.find((item) => item.id === task.schedule_id) : undefined;
-  const scheduleRun = task.schedule_run_id ? db.runs.find((item) => item.id === task.schedule_run_id) : undefined;
+  const pinnedVersion = task.bot_version_id
+    ? db.versions.find((version) => version.id === task.bot_version_id && version.bot_id === task.bot_id)
+    : undefined;
+  const schedules = db.schedules.filter((schedule) => schedule.task_id === task.id);
+  const taskRuns = db.taskRuns.filter((run) => run.task_id === task.id);
+  const activeRuns = taskRuns.filter((run) => !TERMINAL.has(run.status));
+  const canRun = task.status === 'enabled'
+    && db.bots.find((bot) => bot.id === task.bot_id)?.status === 'enabled';
 
-  const retry = (mode: 'all' | 'failed_items') => {
-    const next = retryTask(task.id, mode);
-    if (next) navigate(`/tasks/${next.id}`);
-  };
-
-  const rerun = () => {
-    const next = rerunTask(task.id);
-    if (next) navigate(`/tasks/${next.id}`);
+  const run = () => {
+    const taskRun = runTask(task.id);
+    if (taskRun) navigate(`/task-runs/${taskRun.id}`);
   };
 
   return (
@@ -64,183 +52,140 @@ export default function TaskDetail() {
           <BackLink to="/tasks" label={t('tasks.detail.back')} />
         </div>
         <div className="left">
-          {active ? (
-            <button className="btn danger sm" onClick={() => cancelTask(task.id)}>■ {t('tasks.cancel')}</button>
-          ) : (
-            <>
-              {canRetry && (
-                <button className="btn sm" onClick={() => retry('all')}>
-                  ↻ {t('tasks.retryAll')}
-                </button>
-              )}
-              {canRetry && failedItems.length > 0 && (
-                <button className="btn sm" onClick={() => retry('failed_items')}>
-                  ↻ {t('tasks.retryFailed')} ({failedItems.length})
-                </button>
-              )}
-              <button className="btn ghost sm" onClick={rerun}>
-                ⏵ {t('tasks.rerun')}
-              </button>
-            </>
-          )}
+          <button className="btn sm" type="button" onClick={run} disabled={!canRun}>
+            ▶ {t('tasks.run')}
+          </button>
+          <div className="admission-ctl">
+            <span>{t('dash.col.status')}</span>
+            <button
+              type="button"
+              className={`toggle${task.status === 'enabled' ? ' on' : ''}`}
+              aria-label={t('dash.col.status')}
+              aria-pressed={task.status === 'enabled'}
+              disabled={task.status === 'archived'}
+              onClick={() => toggleTask(task.id)}
+            />
+          </div>
         </div>
       </div>
 
       <DetailHero
         tag={t('tasks.detail.tag')}
-        title={task.id}
-        sub={<>{snapshot?.bot_code ?? task.bot_code ?? task.bot_id} // {timeShort(task.created_at)}</>}
+        title={task.name}
+        sub={<>{task.id} // {task.bot_code || task.bot_id}</>}
         side={
           <>
             <StatusBadge status={task.status} />
-            <span className="chip violet">{task.run_type}</span>
-            {task.error_code && <span className="chip red">{task.error_code}</span>}
+            <span className="chip violet">{task.input_source}</span>
+            <span className="chip neon mono">P{task.priority}</span>
           </>
         }
       />
 
-      <h2 className="sec-title worker-section-title">{t('tasks.detail.live')}</h2>
       <div className="stat-grid detail-stats">
-        <div className="stat stat-wide">
-          <div className="stat-wide-head">
-            <div>
-              <div className="stat-val">{done}/{stats.total}</div>
-              <div className="stat-label">{t('dash.col.progress')}</div>
-            </div>
-            <span className="chip neon">{pct}%</span>
-          </div>
-          <div className="progress">
-            <div className="fill" style={{ width: `${pct}%` }} />
-          </div>
+        <div className="stat">
+          <div className="stat-val">{taskRuns.length}</div>
+          <div className="stat-label">{t('tasks.stat.runs')}</div>
         </div>
         <div className="stat">
-          <div className="stat-val green">{stats.success}</div>
-          <div className="stat-label">{t('tasks.stat.success')}</div>
+          <div className="stat-val green">{activeRuns.length}</div>
+          <div className="stat-label">{t('tasks.stat.active')}</div>
         </div>
         <div className="stat">
-          <div className="stat-val red">{stats.failed + (stats.timeout ?? 0)}</div>
-          <div className="stat-label">{t('tasks.stat.failed')}</div>
+          <div className="stat-val">{schedules.length}</div>
+          <div className="stat-label">{t('tasks.stat.schedules')}</div>
         </div>
         <div className="stat">
-          <div className="stat-val dim">{stats.skipped}</div>
-          <div className="stat-label">{t('tasks.stat.skipped')}</div>
+          <div className="stat-val sm mono">{pinnedVersion ? `v${pinnedVersion.version}` : t('tasks.version.current')}</div>
+          <div className="stat-label">{t('tasks.f.version')}</div>
         </div>
       </div>
 
       <div className="two-col detail-grid">
-        <Panel title={t('tasks.detail.provenance')}>
+        <Panel title={t('tasks.detail.template')}>
           <dl className="kv detail-kv">
+            <dt>ID</dt><dd className="mono">{task.id}</dd>
             <dt>{t('dash.col.jobDefinition')}</dt>
             <dd>
-              <button className="btn ghost sm relationship-link" type="button" onClick={() => navigate(`/job-definitions/${snapshot?.bot_id ?? task.bot_id}`)}>
-                {snapshot?.bot_code ?? task.bot_code ?? task.bot_id}
+              <button className="btn ghost sm relationship-link" type="button" onClick={() => navigate(`/job-definitions/${task.bot_id}`)}>
+                {task.bot_code || task.bot_id}
               </button>
             </dd>
-            <dt>{t('jobDefinitions.col.version')}</dt>
-            <dd className="mono">{snapshot ? `v${snapshot.version} // ${snapshot.bot_version_id}` : task.bot_version_id ?? '—'}</dd>
-            <dt>{t('jobDefinitions.f.sourceFile')}</dt><dd className="mono">{snapshot?.source_file_id ?? '—'}</dd>
-            <dt>{t('jobDefinitions.f.entrypoint')}</dt><dd className="mono">{snapshot?.entrypoint ?? task.entrypoint}</dd>
-            <dt>{t('jobDefinitions.f.scriptSource')}</dt><dd className="mono">{snapshot?.script_source ?? '—'}</dd>
-            <dt>{t('sch.detail.tag')}</dt>
-            <dd className="mono">
-              {task.schedule_id ? (
-                <button className="btn ghost sm relationship-link" type="button" onClick={() => navigate(`/schedules/${task.schedule_id}`)}>
-                  {schedule?.name ?? task.schedule_id}
-                </button>
-              ) : '—'}
-            </dd>
-            <dt>{t('sch.col.run')}</dt>
-            <dd className="mono">
-              {task.schedule_run_id ? (
-                <button className="btn ghost sm relationship-link" type="button" onClick={() => navigate(`/schedule-runs/${task.schedule_run_id}`)}>
-                  {scheduleRun?.id ?? task.schedule_run_id}
-                </button>
-              ) : '—'}
-            </dd>
-            <dt>{t('tasks.detail.worker')}</dt>
-            <dd className="mono">
-              {task.worker_id ? (
-                <button className="btn ghost sm relationship-link" onClick={() => navigate(`/workers/${task.worker_id}`)}>
-                  {worker?.name ?? task.worker_id}
-                </button>
-              ) : '—'}
-            </dd>
-            {task.source_task_id && (
-              <>
-                <dt>{t('tasks.detail.source')}</dt>
-                <dd className="mono">
-                  <button className="btn ghost sm relationship-link" onClick={() => navigate(`/tasks/${task.source_task_id}`)}>
-                    {task.source_task_id}
-                  </button>
-                </dd>
-              </>
-            )}
-          </dl>
-        </Panel>
-
-        <Panel title={t('tasks.detail.execution')}>
-          <dl className="kv detail-kv">
-            <dt>{t('tasks.col.runtype')}</dt><dd><span className="chip violet">{task.run_type}</span></dd>
-            <dt>{t('tasks.f.inputSource')}</dt><dd><span className="chip neon">{task.input_source}</span></dd>
+            <dt>{t('tasks.f.version')}</dt>
+            <dd className="mono">{pinnedVersion ? `v${pinnedVersion.version}` : t('tasks.version.current')}</dd>
+            <dt>{t('tasks.f.inputSource')}</dt><dd><span className="chip violet">{task.input_source}</span></dd>
             <dt>{t('tasks.f.inputFile')}</dt><dd className="mono">{task.input_file_id ?? '—'}</dd>
-            <dt>{t('tasks.f.params')}</dt><dd className="mono">{JSON.stringify(task.input_params)}</dd>
-            <dt>{t('tasks.f.config')}</dt><dd className="mono">{JSON.stringify(task.config)}</dd>
-            <dt>{t('tasks.f.requirements')}</dt><dd className="mono">{JSON.stringify(task.requirements)}</dd>
             <dt>{t('tasks.f.priority')}</dt><dd className="mono">{task.priority}</dd>
             <dt>{t('dash.col.created')}</dt><dd className="mono">{timeShort(task.created_at)}</dd>
-            {task.finished_at && (
-              <>
-                <dt>{t('tasks.detail.finished')}</dt>
-                <dd className="mono">{timeShort(task.finished_at)}</dd>
-              </>
-            )}
+          </dl>
+          <p className="dim">{task.description || '—'}</p>
+        </Panel>
+        <Panel title={t('tasks.detail.execution')}>
+          <dl className="kv detail-kv">
+            <dt>{t('tasks.f.params')}</dt><dd className="mono">{json(task.input_params)}</dd>
+            <dt>{t('tasks.f.config')}</dt><dd className="mono">{json(task.config)}</dd>
+            <dt>{t('tasks.f.requirements')}</dt><dd className="mono">{json(task.requirements)}</dd>
           </dl>
         </Panel>
       </div>
 
-      <Panel title={t('tasks.detail.snapshot')}>
-        <dl className="kv detail-kv">
-          <dt>{t('jobDefinitions.f.schema')}</dt><dd className="mono">{JSON.stringify(snapshot?.input_params_schema ?? {})}</dd>
-          <dt>{t('tasks.detail.defaultInput')}</dt><dd className="mono">{snapshot?.default_input_source ?? '—'}</dd>
-          <dt>{t('tasks.detail.defaultConfig')}</dt><dd className="mono">{JSON.stringify(snapshot?.default_config ?? {})}</dd>
-          <dt>{t('tasks.detail.defaultRequirements')}</dt><dd className="mono">{JSON.stringify(snapshot?.default_requirements ?? {})}</dd>
-        </dl>
-      </Panel>
-
-      <h2 className="sec-title worker-section-title">{t('tasks.detail.items')}</h2>
-      <div className="data-scroll">
-        <table className="data">
-          <thead>
-            <tr><th>{t('tasks.item.key')}</th><th>{t('tasks.item.status')}</th></tr>
-          </thead>
-          <tbody>
-            {task.items.map((item) => (
-              <tr key={item.id} className="no-click">
-                <td className="mono strong">{item.key}</td>
-                <td><StatusBadge status={item.status} /></td>
+      <h2 className="sec-title worker-section-title">{t('tasks.detail.schedules')}</h2>
+      {schedules.length === 0 ? (
+        <div className="empty">{t('tasks.detail.noschedules')}</div>
+      ) : (
+        <div className="data-scroll">
+          <table className="data">
+            <thead>
+              <tr>
+                <th>{t('sch.col.name')}</th>
+                <th>{t('sch.col.cron')}</th>
+                <th>{t('sch.col.nextRun')}</th>
+                <th>{t('dash.col.status')}</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {schedules.map((schedule) => (
+                <tr key={schedule.id} onClick={() => navigate(`/schedules/${schedule.id}`)}>
+                  <td className="strong">{schedule.name}</td>
+                  <td className="mono">{schedule.cron}</td>
+                  <td className="mono"><ScheduleNextRun schedule={schedule} /></td>
+                  <td><StatusBadge status={schedule.status} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
-      <h2 className="sec-title worker-section-title">{t('tasks.detail.logs')}</h2>
-      <div className="terminal tall" ref={termRef}>
-        {logs.map((log) => (
-          <div className="tline" key={log.id}>
-            <span className="tseq">{String(log.seq).padStart(3, '0')}</span>
-            <span className={`lv ${log.level}`}>{log.level}</span>
-            <span className="src">[{log.source}]</span>
-            <span className="msg">{log.message}</span>
-          </div>
-        ))}
-        {active && (
-          <div className="tline">
-            <span className="tseq">···</span>
-            <span className="msg" style={{ color: 'var(--neon)' }}>▌</span>
-          </div>
-        )}
-      </div>
+      <h2 className="sec-title worker-section-title">{t('tasks.detail.runs')}</h2>
+      {taskRuns.length === 0 ? (
+        <div className="empty">{t('tasks.detail.noruns')}</div>
+      ) : (
+        <div className="data-scroll">
+          <table className="data">
+            <thead>
+              <tr>
+                <th>{t('taskRuns.col.id')}</th>
+                <th>{t('tasks.col.runtype')}</th>
+                <th>{t('dash.col.status')}</th>
+                <th>{t('dash.col.progress')}</th>
+                <th>{t('dash.col.created')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {taskRuns.map((taskRun) => (
+                <tr key={taskRun.id} onClick={() => navigate(`/task-runs/${taskRun.id}`)}>
+                  <td className="mono strong">{taskRun.id}</td>
+                  <td><span className="chip violet">{taskRun.run_type}</span></td>
+                  <td><StatusBadge status={taskRun.status} /></td>
+                  <td style={{ minWidth: 140 }}><Progress task={taskRun} /></td>
+                  <td className="mono">{timeShort(taskRun.created_at)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </>
   );
 }

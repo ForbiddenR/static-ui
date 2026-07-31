@@ -14,10 +14,11 @@ interface NavItem {
 
 const NAV: NavItem[] = [
   { to: '/', key: 'nav.dashboard', idx: '00' },
-  { to: '/job-definitions', key: 'nav.jobDefinitions', idx: '01', section: 'nav.section.ops' },
-  { to: '/tasks', key: 'nav.tasks', idx: '02' },
-  { to: '/schedules', key: 'nav.schedules', idx: '03' },
-  { to: '/workers', key: 'nav.workers', idx: '04', section: 'nav.section.observe' },
+  { to: '/workers', key: 'nav.workers', idx: '01', section: 'nav.section.observe' },
+  { to: '/job-definitions', key: 'nav.jobDefinitions', idx: '02', section: 'nav.section.ops' },
+  { to: '/tasks', key: 'nav.tasks', idx: '03' },
+  { to: '/schedules', key: 'nav.schedules', idx: '04' },
+  { to: '/task-runs', key: 'nav.taskRuns', idx: '05' },
 ];
 
 export default function Layout() {
@@ -26,12 +27,12 @@ export default function Layout() {
   const location = useLocation();
   const db = useDB();
 
-  // Mock execution engine: advance active tasks and worker telemetry on a heartbeat.
+  // Mock execution engine: advance active TaskRuns and worker telemetry on a heartbeat.
   useEffect(() => {
     void tickSchedules();
     const timer = window.setInterval(() => {
       void tickSchedules();
-      db.tasks
+      db.taskRuns
         .filter((x) => x.status === 'pending' || x.status === 'dispatching' || x.status === 'running')
         .forEach((x) => tickTask(x.id));
       tickWorkers();
@@ -39,7 +40,7 @@ export default function Layout() {
     return () => window.clearInterval(timer);
   }, [db]);
 
-  const activeCount = db.tasks.filter((x) => ['pending', 'dispatching', 'running'].includes(x.status)).length;
+  const activeCount = db.taskRuns.filter((x) => ['pending', 'dispatching', 'running'].includes(x.status)).length;
 
   return (
     <>
@@ -62,7 +63,7 @@ export default function Layout() {
                 >
                   <span className="idx">{item.idx}</span>
                   {t(item.key)}
-                  {item.to === '/tasks' && activeCount > 0 && (
+                  {item.to === '/task-runs' && activeCount > 0 && (
                     <span className="chip neon" style={{ marginLeft: 'auto' }}>{activeCount}</span>
                   )}
                 </NavLink>
